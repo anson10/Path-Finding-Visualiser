@@ -1,5 +1,4 @@
 #include <SFML/Graphics.hpp>
-// #include<Windows.h>
 #include <vector>
 #include <queue>
 #include <stack>
@@ -13,21 +12,18 @@
 using namespace std;
 using namespace chrono;
 
-// Constants
-const int WINDOW_WIDTH = 1200;
+const int WINDOW_WIDTH  = 1200;
 const int WINDOW_HEIGHT = 800;
-const int GRID_SIZE = 40;
-const int CELL_SIZE = min(WINDOW_HEIGHT, WINDOW_WIDTH) / GRID_SIZE;
-const int UI_WIDTH = 300;
-const int BTN_HEIGHT = 40;
-const int BTN_SPACING = 10;
-#ifndef INFINITY
-const float INFINITY = numeric_limits<float>::max();
-#endif
-enum class CellType { Empty, Wall, Start, End, Path, Visited };
-enum class Algorithm { BFS, DFS, AStar, Dijkstra, Greedy };
-enum class State { IDLE, VISUALIZING };
+const int GRID_SIZE     = 40;
+const int CELL_SIZE     = min(WINDOW_HEIGHT, WINDOW_WIDTH) / GRID_SIZE;
+const int UI_WIDTH      = 300;
+const int GRID_WIDTH    = WINDOW_WIDTH - UI_WIDTH;   // grid stops here
+const int BTN_HEIGHT    = 40;
+const int BTN_SPACING   = 10;
 
+enum class CellType { Empty, Wall, Start, End, Path, Visited };
+enum class Algorithm  { BFS, DFS, AStar, Dijkstra, Greedy };
+enum class State      { IDLE, VISUALIZING };
 
 struct Cell {
     sf::RectangleShape rect;
@@ -47,61 +43,76 @@ pair<int, int> startPos(-1, -1), endPos(-1, -1);
 int visualizationDelay = 10;
 
 Algorithm currentAlgorithm = Algorithm::BFS;
-string statusMessage = "Ready";
-double lastBenchmark = 0.0;
-bool pathFound = false;
-State currentState = State::IDLE;
+string    statusMessage    = "Place start, then end, then draw walls";
+double    lastBenchmark    = 0.0;
+bool      pathFound        = false;
+State     currentState     = State::IDLE;
 
 namespace Colors {
-    const sf::Color Background(40, 40, 40);
-    const sf::Color Wall(30, 30, 30);
-    const sf::Color Start(0, 200, 0);
-    const sf::Color End(200, 0, 0);
-    const sf::Color Path(255, 255, 100);
-    const sf::Color Visited(100, 200, 255);
-    const sf::Color Button(70, 70, 70);
-    const sf::Color ButtonHover(100, 100, 100);
-    const sf::Color Text(255, 255, 255);
+    const sf::Color Background (40,  40,  40);
+    const sf::Color Wall       (30,  30,  30);
+    const sf::Color Start      (0,   200, 0);
+    const sf::Color End        (200, 0,   0);
+    const sf::Color Path       (255, 255, 100);
+    const sf::Color Visited    (100, 200, 255);
+    const sf::Color Button     (70,  70,  70);
+    const sf::Color ButtonActive(0,  140, 210);  // selected algorithm highlight
+    const sf::Color Text       (255, 255, 255);
+    const sf::Color Warning    (255, 180, 0);
 }
 
+// ─── forward declarations ────────────────────────────────────────────────────
+void drawGrid(sf::RenderWindow& window);
+void drawUI  (sf::RenderWindow& window);
 
+// Sleep for `ms` milliseconds while still draining the SFML event queue so
+// the window stays responsive (can be moved/closed) during visualization.
+static void sleepAndPoll(sf::RenderWindow& window, int ms) {
+    auto deadline = high_resolution_clock::now() + milliseconds(ms);
+    while (high_resolution_clock::now() < deadline) {
+        sf::Event e;
+        while (window.pollEvent(e)) {
+            if (e.type == sf::Event::Closed) window.close();
+        }
+        sf::sleep(sf::milliseconds(1));
+    }
+}
+
+// ─── Maze generator ──────────────────────────────────────────────────────────
 class MazeGenerator {
 public:
     static void generateRandomWalls(double probability) {
-        cout << "Generating random walls..." << endl; // Debug statement
-
-        static mt19937 rng(chrono::system_clock::now().time_since_epoch().count());
+        static mt19937 rng(
+            static_cast<unsigned>(chrono::system_clock::now().time_since_epoch().count()));
         bernoulli_distribution dist(probability);
 
         for (auto& row : grid) {
             for (auto& cell : row) {
-                if (cell.type != CellType::Start && cell.type != CellType::End) {
-                    cell.type = dist(rng) ? CellType::Wall : CellType::Empty;
-                }
+                // Never overwrite start/end; also clear stale visited/path cells
+                if (cell.type == CellType::Start || cell.type == CellType::End) continue;
+                cell.type = dist(rng) ? CellType::Wall : CellType::Empty;
             }
         }
-
-        cout << "Random walls generated!" << endl; // Debug statement
     }
 };
-void drawGrid(sf::RenderWindow& window) {
-    cout << "Drawing grid..." << endl; // Debug statement
 
+// ─── Grid rendering ──────────────────────────────────────────────────────────
+void drawGrid(sf::RenderWindow& window) {
     for (auto& row : grid) {
         for (auto& cell : row) {
             switch (cell.type) {
-            case CellType::Wall: cell.rect.setFillColor(Colors::Wall); break;
-            case CellType::Start: cell.rect.setFillColor(Colors::Start); break;
-            case CellType::End: cell.rect.setFillColor(Colors::End); break;
-            case CellType::Path: cell.rect.setFillColor(Colors::Path); break;
+            case CellType::Wall:    cell.rect.setFillColor(Colors::Wall);    break;
+            case CellType::Start:   cell.rect.setFillColor(Colors::Start);   break;
+            case CellType::End:     cell.rect.setFillColor(Colors::End);     break;
+            case CellType::Path:    cell.rect.setFillColor(Colors::Path);    break;
             case CellType::Visited: cell.rect.setFillColor(Colors::Visited); break;
-            default: cell.rect.setFillColor(sf::Color::White);
+            default:                cell.rect.setFillColor(sf::Color::White);
             }
             window.draw(cell.rect);
         }
     }
 
-    // Draw grid lines
+    // Vertical grid lines
     sf::RectangleShape line(sf::Vector2f(1, WINDOW_HEIGHT));
     line.setFillColor(sf::Color(50, 50, 50));
     for (int x = 0; x <= GRID_SIZE; ++x) {
@@ -109,28 +120,30 @@ void drawGrid(sf::RenderWindow& window) {
         window.draw(line);
     }
 
-    line.setSize(sf::Vector2f(WINDOW_WIDTH, 1));
+    // Horizontal grid lines — stop at GRID_WIDTH, not full WINDOW_WIDTH
+    line.setSize(sf::Vector2f(GRID_WIDTH, 1));
     for (int y = 0; y <= GRID_SIZE; ++y) {
         line.setPosition(0, y * CELL_SIZE);
         window.draw(line);
     }
 }
 
+// ─── Pathfinder ──────────────────────────────────────────────────────────────
 class Pathfinder {
 public:
     static bool findPath(Algorithm algo, sf::RenderWindow& window, double& duration) {
-        auto start = high_resolution_clock::now();
+        auto t0 = high_resolution_clock::now();
         pathFound = false;
 
         switch (algo) {
-        case Algorithm::BFS: pathFound = BFS(window); break;
-        case Algorithm::DFS: pathFound = DFS(window); break;
-        case Algorithm::AStar: pathFound = aStar(window); break;
+        case Algorithm::BFS:      pathFound = BFS     (window); break;
+        case Algorithm::DFS:      pathFound = DFS     (window); break;
+        case Algorithm::AStar:    pathFound = aStar   (window); break;
         case Algorithm::Dijkstra: pathFound = dijkstra(window); break;
-        case Algorithm::Greedy: pathFound = greedy(window); break;
+        case Algorithm::Greedy:   pathFound = greedy  (window); break;
         }
 
-        duration = duration_cast<milliseconds>(high_resolution_clock::now() - start).count() / 1000.0;
+        duration      = duration_cast<milliseconds>(high_resolution_clock::now() - t0).count() / 1000.0;
         lastBenchmark = duration;
         return pathFound;
     }
@@ -139,120 +152,123 @@ private:
     struct Node {
         int x, y;
         float g, h;
-
         Node(int x, int y, float g, float h) : x(x), y(y), g(g), h(h) {}
-        bool operator>(const Node& other) const { return (g + h) > (other.g + other.h); }
+        bool operator>(const Node& o) const { return (g + h) > (o.g + o.h); }
     };
 
+    // Mark a cell as visited, redraw, and sleep — shared by all algorithms
+    static void updateVisual(int y, int x, sf::RenderWindow& window) {
+        if (grid[y][x].type != CellType::Start && grid[y][x].type != CellType::End) {
+            grid[y][x].type = CellType::Visited;
+            drawGrid(window);
+            window.display();
+            sleepAndPoll(window, visualizationDelay);
+        }
+    }
+
+    // Trace the path backwards and animate it
+    static void reconstructPath(const vector<vector<pair<int,int>>>& parent,
+                                 sf::RenderWindow& window) {
+        pair<int,int> current = endPos;
+        while (current != startPos) {
+            // Guard: break if index is out of range or parent not set
+            if (current.first  < 0 || current.first  >= GRID_SIZE ||
+                current.second < 0 || current.second >= GRID_SIZE) break;
+
+            pair<int,int> next = parent[current.second][current.first];
+            if (next.first == -1 && next.second == -1) break;
+
+            if (grid[current.second][current.first].type != CellType::Start &&
+                grid[current.second][current.first].type != CellType::End)
+                grid[current.second][current.first].type = CellType::Path;
+
+            current = next;
+            drawGrid(window);
+            window.display();
+            sleepAndPoll(window, visualizationDelay);
+        }
+    }
+
     static bool BFS(sf::RenderWindow& window) {
-        queue<pair<int, int>> q;
-        vector<vector<bool>> visited(GRID_SIZE, vector<bool>(GRID_SIZE, false));
-        vector<vector<pair<int, int>>> parent(GRID_SIZE, vector<pair<int, int>>(GRID_SIZE, { -1, -1 }));
+        queue<pair<int,int>> q;
+        vector<vector<bool>>         visited(GRID_SIZE, vector<bool>(GRID_SIZE, false));
+        vector<vector<pair<int,int>>> parent (GRID_SIZE, vector<pair<int,int>>(GRID_SIZE, {-1,-1}));
 
         q.push(startPos);
         visited[startPos.second][startPos.first] = true;
 
         while (!q.empty()) {
-            auto [x, y] = q.front();
-            q.pop();
+            auto [x, y] = q.front(); q.pop();
+            if (x == endPos.first && y == endPos.second) { reconstructPath(parent, window); return true; }
 
-            if (x == endPos.first && y == endPos.second) {
-                reconstructPath(parent, window);
-                return true;
-            }
-
-            for (int dx : {-1, 0, 1}) {
-                for (int dy : {-1, 0, 1}) {
-                    if (abs(dx) + abs(dy) != 1) continue;
-
-                    int nx = x + dx, ny = y + dy;
-                    if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE &&
-                        !visited[ny][nx] && grid[ny][nx].type != CellType::Wall) {
-                        visited[ny][nx] = true;
-                        parent[ny][nx] = { x, y };
-                        q.push({ nx, ny });
-                        updateVisual(ny, nx, window);
-                    }
-                }
+            for (int dx : {-1, 0, 1}) for (int dy : {-1, 0, 1}) {
+                if (abs(dx) + abs(dy) != 1) continue;
+                int nx = x + dx, ny = y + dy;
+                if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
+                if (visited[ny][nx] || grid[ny][nx].type == CellType::Wall) continue;
+                visited[ny][nx] = true;
+                parent [ny][nx] = {x, y};
+                q.push({nx, ny});
+                updateVisual(ny, nx, window);
             }
         }
         return false;
     }
 
     static bool DFS(sf::RenderWindow& window) {
-        stack<pair<int, int>> s;
-        vector<vector<bool>> visited(GRID_SIZE, vector<bool>(GRID_SIZE, false));
-        vector<vector<pair<int, int>>> parent(GRID_SIZE, vector<pair<int, int>>(GRID_SIZE, { -1, -1 }));
+        stack<pair<int,int>> s;
+        vector<vector<bool>>         visited(GRID_SIZE, vector<bool>(GRID_SIZE, false));
+        vector<vector<pair<int,int>>> parent (GRID_SIZE, vector<pair<int,int>>(GRID_SIZE, {-1,-1}));
 
         s.push(startPos);
         visited[startPos.second][startPos.first] = true;
 
         while (!s.empty()) {
-            auto [x, y] = s.top();
-            s.pop();
+            auto [x, y] = s.top(); s.pop();
+            if (x == endPos.first && y == endPos.second) { reconstructPath(parent, window); return true; }
 
-            if (x == endPos.first && y == endPos.second) {
-                reconstructPath(parent, window);
-                return true;
-            }
-
-            for (int dx : {-1, 0, 1}) {
-                for (int dy : {-1, 0, 1}) {
-                    if (abs(dx) + abs(dy) != 1) continue;
-
-                    int nx = x + dx, ny = y + dy;
-                    if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE &&
-                        !visited[ny][nx] && grid[ny][nx].type != CellType::Wall) {
-                        visited[ny][nx] = true;
-                        parent[ny][nx] = { x, y };
-                        s.push({ nx, ny });
-                        updateVisual(ny, nx, window);
-                    }
-                }
+            for (int dx : {-1, 0, 1}) for (int dy : {-1, 0, 1}) {
+                if (abs(dx) + abs(dy) != 1) continue;
+                int nx = x + dx, ny = y + dy;
+                if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
+                if (visited[ny][nx] || grid[ny][nx].type == CellType::Wall) continue;
+                visited[ny][nx] = true;
+                parent [ny][nx] = {x, y};
+                s.push({nx, ny});
+                updateVisual(ny, nx, window);
             }
         }
         return false;
     }
 
     static bool dijkstra(sf::RenderWindow& window) {
-        priority_queue<pair<float, pair<int, int>>,
-            vector<pair<float, pair<int, int>>>,
-            greater<>> pq;
+        using PQEntry = pair<float, pair<int,int>>;
+        priority_queue<PQEntry, vector<PQEntry>, greater<PQEntry>> pq;
 
-        vector<vector<float>> dist(GRID_SIZE, vector<float>(GRID_SIZE, INFINITY));
-        vector<vector<pair<int, int>>> parent(GRID_SIZE, vector<pair<int, int>>(GRID_SIZE, { -1, -1 }));
+        const float INF = numeric_limits<float>::max();
+        vector<vector<float>>        dist  (GRID_SIZE, vector<float>(GRID_SIZE, INF));
+        vector<vector<pair<int,int>>> parent(GRID_SIZE, vector<pair<int,int>>(GRID_SIZE, {-1,-1}));
 
         dist[startPos.second][startPos.first] = 0;
-        pq.push({ 0, startPos });
+        pq.push({0, startPos});
 
         while (!pq.empty()) {
-            auto [currentDist, pos] = pq.top();
+            auto [currentDist, pos] = pq.top(); pq.pop();
             auto [x, y] = pos;
-            pq.pop();
-
-            if (x == endPos.first && y == endPos.second) {
-                reconstructPath(parent, window);
-                return true;
-            }
-
+            if (x == endPos.first && y == endPos.second) { reconstructPath(parent, window); return true; }
             if (currentDist > dist[y][x]) continue;
 
-            for (int dx : {-1, 0, 1}) {
-                for (int dy : {-1, 0, 1}) {
-                    if (abs(dx) + abs(dy) != 1) continue;
-
-                    int nx = x + dx, ny = y + dy;
-                    if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE &&
-                        grid[ny][nx].type != CellType::Wall) {
-
-                        float newDist = currentDist + 1;
-                        if (newDist < dist[ny][nx]) {
-                            dist[ny][nx] = newDist;
-                            parent[ny][nx] = { x, y };
-                            pq.push({ newDist, {nx, ny} });
-                            updateVisual(ny, nx, window);
-                        }
-                    }
+            for (int dx : {-1, 0, 1}) for (int dy : {-1, 0, 1}) {
+                if (abs(dx) + abs(dy) != 1) continue;
+                int nx = x + dx, ny = y + dy;
+                if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
+                if (grid[ny][nx].type == CellType::Wall) continue;
+                float newDist = currentDist + 1;
+                if (newDist < dist[ny][nx]) {
+                    dist  [ny][nx] = newDist;
+                    parent[ny][nx] = {x, y};
+                    pq.push({newDist, {nx, ny}});
+                    updateVisual(ny, nx, window);
                 }
             }
         }
@@ -260,43 +276,32 @@ private:
     }
 
     static bool greedy(sf::RenderWindow& window) {
-        auto heuristic = [](int x1, int y1) {
-            return abs(x1 - endPos.first) + abs(y1 - endPos.second);
-            };
+        auto h = [](int x, int y) {
+            return abs(x - endPos.first) + abs(y - endPos.second);
+        };
+        using PQEntry = pair<int, pair<int,int>>;
+        priority_queue<PQEntry, vector<PQEntry>, greater<PQEntry>> pq;
 
-        priority_queue<pair<int, pair<int, int>>,
-            vector<pair<int, pair<int, int>>>,
-            greater<>> pq;
+        vector<vector<bool>>         visited(GRID_SIZE, vector<bool>(GRID_SIZE, false));
+        vector<vector<pair<int,int>>> parent (GRID_SIZE, vector<pair<int,int>>(GRID_SIZE, {-1,-1}));
 
-        vector<vector<bool>> visited(GRID_SIZE, vector<bool>(GRID_SIZE, false));
-        vector<vector<pair<int, int>>> parent(GRID_SIZE, vector<pair<int, int>>(GRID_SIZE, { -1, -1 }));
-
-        pq.push({ heuristic(startPos.first, startPos.second), startPos });
+        pq.push({h(startPos.first, startPos.second), startPos});
         visited[startPos.second][startPos.first] = true;
 
         while (!pq.empty()) {
-            auto [hVal, pos] = pq.top();
+            auto [hVal, pos] = pq.top(); pq.pop();
             auto [x, y] = pos;
-            pq.pop();
+            if (x == endPos.first && y == endPos.second) { reconstructPath(parent, window); return true; }
 
-            if (x == endPos.first && y == endPos.second) {
-                reconstructPath(parent, window);
-                return true;
-            }
-
-            for (int dx : {-1, 0, 1}) {
-                for (int dy : {-1, 0, 1}) {
-                    if (abs(dx) + abs(dy) != 1) continue;
-
-                    int nx = x + dx, ny = y + dy;
-                    if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE &&
-                        !visited[ny][nx] && grid[ny][nx].type != CellType::Wall) {
-                        visited[ny][nx] = true;
-                        parent[ny][nx] = { x, y };
-                        pq.push({ heuristic(nx, ny), {nx, ny} });
-                        updateVisual(ny, nx, window);
-                    }
-                }
+            for (int dx : {-1, 0, 1}) for (int dy : {-1, 0, 1}) {
+                if (abs(dx) + abs(dy) != 1) continue;
+                int nx = x + dx, ny = y + dy;
+                if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
+                if (visited[ny][nx] || grid[ny][nx].type == CellType::Wall) continue;
+                visited[ny][nx] = true;
+                parent [ny][nx] = {x, y};
+                pq.push({h(nx, ny), {nx, ny}});
+                updateVisual(ny, nx, window);
             }
         }
         return false;
@@ -304,191 +309,157 @@ private:
 
     static bool aStar(sf::RenderWindow& window) {
         priority_queue<Node, vector<Node>, greater<Node>> openSet;
-        vector<vector<float>> gScore(GRID_SIZE, vector<float>(GRID_SIZE, INFINITY));
-        vector<vector<pair<int, int>>> parent(GRID_SIZE, vector<pair<int, int>>(GRID_SIZE, { -1, -1 }));
 
-        auto heuristic = [](int x1, int y1, int x2, int y2) {
-            return abs(x1 - x2) + abs(y1 - y2);
-            };
+        const float INF = numeric_limits<float>::max();
+        vector<vector<float>>        gScore(GRID_SIZE, vector<float>(GRID_SIZE, INF));
+        vector<vector<pair<int,int>>> parent(GRID_SIZE, vector<pair<int,int>>(GRID_SIZE, {-1,-1}));
+
+        auto heuristic = [](int x1, int y1, int x2, int y2) -> float {
+            return static_cast<float>(abs(x1 - x2) + abs(y1 - y2));
+        };
 
         gScore[startPos.second][startPos.first] = 0;
         openSet.push(Node(startPos.first, startPos.second, 0,
             heuristic(startPos.first, startPos.second, endPos.first, endPos.second)));
 
         while (!openSet.empty()) {
-            Node current = openSet.top();
-            openSet.pop();
-
-            if (current.x == endPos.first && current.y == endPos.second) {
-                reconstructPath(parent, window);
-                return true;
+            Node cur = openSet.top(); openSet.pop();
+            if (cur.x == endPos.first && cur.y == endPos.second) {
+                reconstructPath(parent, window); return true;
             }
 
-            for (int dx : {-1, 0, 1}) {
-                for (int dy : {-1, 0, 1}) {
-                    if (dx == 0 && dy == 0) continue;
-                    if (abs(dx) + abs(dy) == 2) continue;
+            for (int dx : {-1, 0, 1}) for (int dy : {-1, 0, 1}) {
+                if (dx == 0 && dy == 0) continue;
+                if (abs(dx) + abs(dy) == 2) continue;
+                int nx = cur.x + dx, ny = cur.y + dy;
+                if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
+                if (grid[ny][nx].type == CellType::Wall) continue;
 
-                    int nx = current.x + dx, ny = current.y + dy;
-                    if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
-                    if (grid[ny][nx].type == CellType::Wall) continue;
-
-                    float tentativeG = current.g + 1;
-                    if (tentativeG < gScore[ny][nx]) {
-                        parent[ny][nx] = { current.x, current.y };
-                        gScore[ny][nx] = tentativeG;
-                        float h = heuristic(nx, ny, endPos.first, endPos.second);
-                        openSet.push(Node(nx, ny, tentativeG, h));
-
-                        if (grid[ny][nx].type != CellType::Start && grid[ny][nx].type != CellType::End) {
-                            grid[ny][nx].type = CellType::Visited;
-                            drawGrid(window);
-                            window.display();
-                            sf::sleep(sf::milliseconds(visualizationDelay));
-                        }
-                    }
+                float tG = cur.g + 1;
+                if (tG < gScore[ny][nx]) {
+                    parent[ny][nx] = {cur.x, cur.y};
+                    gScore[ny][nx] = tG;
+                    openSet.push(Node(nx, ny, tG,
+                        heuristic(nx, ny, endPos.first, endPos.second)));
+                    updateVisual(ny, nx, window);  // consistent with all other algorithms
                 }
             }
         }
         return false;
     }
-
-    static void updateVisual(int y, int x, sf::RenderWindow& window) {
-        if (grid[y][x].type != CellType::Start && grid[y][x].type != CellType::End) {
-            grid[y][x].type = CellType::Visited;
-            drawGrid(window);
-            window.display();
-            sf::sleep(sf::milliseconds(visualizationDelay));
-        }
-    }
-
-    static void reconstructPath(const vector<vector<pair<int, int>>>& parent, sf::RenderWindow& window) {
-        pair<int, int> current = endPos;
-        while (current != startPos) {
-            grid[current.second][current.first].type = CellType::Path;
-            current = parent[current.second][current.first];
-            drawGrid(window);
-            window.display();
-            sf::sleep(sf::milliseconds(visualizationDelay));
-        }
-    }
 };
 
+// ─── Mouse input ─────────────────────────────────────────────────────────────
 void handleMouseClick(sf::RenderWindow& window, sf::Event::MouseButtonEvent event) {
     if (currentState != State::IDLE) return;
 
     sf::Vector2i mousePos = sf::Mouse::getPosition(window);
-    if (mousePos.x >= WINDOW_WIDTH - UI_WIDTH) return;
+    if (mousePos.x >= GRID_WIDTH) return;
 
     int gridX = mousePos.x / CELL_SIZE;
     int gridY = mousePos.y / CELL_SIZE;
-
     if (gridX < 0 || gridX >= GRID_SIZE || gridY < 0 || gridY >= GRID_SIZE) return;
 
     Cell& cell = grid[gridY][gridX];
 
     if (event.button == sf::Mouse::Left) {
-        if (cell.type == CellType::Empty) {
+        switch (cell.type) {
+        case CellType::Empty:
+        case CellType::Visited:
+        case CellType::Path:
             if (startPos.first == -1) {
-                startPos = { gridX, gridY };
+                startPos = {gridX, gridY};
                 cell.type = CellType::Start;
-            }
-            else if (endPos.first == -1) {
-                endPos = { gridX, gridY };
+            } else if (endPos.first == -1) {
+                endPos = {gridX, gridY};
                 cell.type = CellType::End;
-            }
-            else {
+            } else {
                 cell.type = CellType::Wall;
             }
-        }
-        else if (cell.type == CellType::Start) {
-            startPos = { -1, -1 };
+            break;
+        case CellType::Wall:
+            cell.type = CellType::Empty;   // left-click toggles wall off
+            break;
+        case CellType::Start:
+            startPos  = {-1, -1};
             cell.type = CellType::Empty;
-        }
-        else if (cell.type == CellType::End) {
-            endPos = { -1, -1 };
+            break;
+        case CellType::End:
+            endPos    = {-1, -1};
             cell.type = CellType::Empty;
+            break;
+        }
+    } else if (event.button == sf::Mouse::Right) {
+        if (cell.type == CellType::Wall || cell.type == CellType::Visited ||
+            cell.type == CellType::Path) {
+            cell.type = CellType::Empty;
+        } else if (cell.type == CellType::Start) {
+            startPos = {-1, -1}; cell.type = CellType::Empty;
+        } else if (cell.type == CellType::End) {
+            endPos   = {-1, -1}; cell.type = CellType::Empty;
         }
     }
-    else if (event.button == sf::Mouse::Right) {
-        if (cell.type == CellType::Wall) {
-            cell.type = CellType::Empty;
-        }
-        else if (cell.type == CellType::Start) {
-            startPos = { -1, -1 };
-            cell.type = CellType::Empty;
-        }
-        else if (cell.type == CellType::End) {
-            endPos = { -1, -1 };
-            cell.type = CellType::Empty;
-        }
-    }
-
-    drawGrid(window);
-    window.display();
 }
 
+// ─── UI rendering ────────────────────────────────────────────────────────────
 void drawUI(sf::RenderWindow& window) {
-    // UI Background
     sf::RectangleShape panel(sf::Vector2f(UI_WIDTH, WINDOW_HEIGHT));
-    panel.setPosition(WINDOW_WIDTH - UI_WIDTH, 0);
+    panel.setPosition(GRID_WIDTH, 0);
     panel.setFillColor(sf::Color(50, 50, 50));
     window.draw(panel);
 
-    float btnX = WINDOW_WIDTH - UI_WIDTH + 20;
-    float btnY = 20;
+    const float btnX = GRID_WIDTH + 20;
+    const float btnY = 20;
+    const vector<string> algoLabels = {"BFS", "DFS", "A*", "Dijkstra", "Greedy"};
 
-    // Section 1: Pathfinding Algorithms
-    sf::Text algoTitle("Pathfinding Algorithms", font, 24);
+    // Section: algorithms
+    sf::Text algoTitle("Pathfinding Algorithms", font, 22);
     algoTitle.setPosition(btnX, btnY);
     algoTitle.setFillColor(Colors::Text);
     window.draw(algoTitle);
 
-    vector<sf::RectangleShape> algoBtns;
-    vector<sf::Text> algoTexts;
-    vector<string> algoLabels = { "BFS", "DFS", "A*", "Dijkstra", "Greedy" };
-
     for (size_t i = 0; i < algoLabels.size(); ++i) {
         sf::RectangleShape btn(sf::Vector2f(UI_WIDTH - 40, BTN_HEIGHT));
-        btn.setPosition(btnX, btnY + 40 + i * (BTN_HEIGHT + BTN_SPACING));
-        btn.setFillColor(Colors::Button);
-        algoBtns.push_back(btn);
+        btn.setPosition(btnX, btnY + 35 + i * (BTN_HEIGHT + BTN_SPACING));
+        bool isSelected = (static_cast<Algorithm>(i) == currentAlgorithm);
+        btn.setFillColor(isSelected ? Colors::ButtonActive : Colors::Button);
+        window.draw(btn);
 
         sf::Text text(algoLabels[i], font, 20);
-        text.setPosition(btnX + 10, btnY + 45 + i * (BTN_HEIGHT + BTN_SPACING));
+        text.setPosition(btnX + 10, btnY + 40 + i * (BTN_HEIGHT + BTN_SPACING));
         text.setFillColor(Colors::Text);
-        algoTexts.push_back(text);
+        window.draw(text);
     }
 
-    // Section 2: Maze Generation Button
-    float mazeBtnY = btnY + 40 + (algoLabels.size() * (BTN_HEIGHT + BTN_SPACING)) + 20;
+    // Section: maze
+    float mazeBtnY = btnY + 35 + algoLabels.size() * (BTN_HEIGHT + BTN_SPACING) + 15;
     sf::RectangleShape mazeBtn(sf::Vector2f(UI_WIDTH - 40, BTN_HEIGHT));
     mazeBtn.setPosition(btnX, mazeBtnY);
     mazeBtn.setFillColor(Colors::Button);
     window.draw(mazeBtn);
 
-    sf::Text mazeText("Generate Random Maze", font, 18);
-    mazeText.setPosition(btnX + 10, mazeBtnY + 5);
+    sf::Text mazeText("Generate Random Maze", font, 17);
+    mazeText.setPosition(btnX + 5, mazeBtnY + 8);
     mazeText.setFillColor(Colors::Text);
     window.draw(mazeText);
 
-    // Section 3: Results
-    sf::Text resultsTitle("Results", font, 24);
-    resultsTitle.setPosition(btnX, mazeBtnY + BTN_HEIGHT + BTN_SPACING + 20);
+    // Section: results
+    float resultsY = mazeBtnY + BTN_HEIGHT + 20;
+    sf::Text resultsTitle("Results", font, 22);
+    resultsTitle.setPosition(btnX, resultsY);
     resultsTitle.setFillColor(Colors::Text);
     window.draw(resultsTitle);
 
-    // Benchmark Text
-    stringstream benchText;
-    benchText << "Time: " << fixed << setprecision(3) << lastBenchmark << "s\n"
-        << "Status: " << statusMessage << "\n"
-        << "Result: " << (pathFound ? "Path found" : "No path");
-    sf::Text benchmarkText(benchText.str(), font, 20);
-    benchmarkText.setPosition(btnX, resultsTitle.getPosition().y + 40);
-    benchmarkText.setFillColor(Colors::Text);
-    window.draw(benchmarkText);
+    stringstream ss;
+    ss << "Time:   " << fixed << setprecision(3) << lastBenchmark << " s\n"
+       << "Status: " << statusMessage << "\n"
+       << "Result: " << (pathFound ? "Path found" : "No path");
+    sf::Text results(ss.str(), font, 18);
+    results.setPosition(btnX, resultsY + 35);
+    results.setFillColor(Colors::Text);
+    window.draw(results);
 
-    // Section 4: Reset Grid Button (at bottom)
+    // Section: reset (pinned to bottom)
     sf::RectangleShape resetBtn(sf::Vector2f(UI_WIDTH - 40, BTN_HEIGHT));
     resetBtn.setPosition(btnX, WINDOW_HEIGHT - BTN_HEIGHT - 20);
     resetBtn.setFillColor(Colors::Button);
@@ -498,98 +469,97 @@ void drawUI(sf::RenderWindow& window) {
     resetText.setPosition(btnX + 10, WINDOW_HEIGHT - BTN_HEIGHT - 15);
     resetText.setFillColor(Colors::Text);
     window.draw(resetText);
-
-    // Draw all buttons and text
-    for (const auto& btn : algoBtns) window.draw(btn);
-    for (const auto& text : algoTexts) window.draw(text);
 }
+
+// ─── Entry point ─────────────────────────────────────────────────────────────
 int main() {
-    sf::RenderWindow window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "Pathfinding Visualizer");
-    window.setFramerateLimit(60); // Limit frame rate to 60 FPS
-    // HWND hwnd = GetConsoleWindow();
-    // ShowWindow(hwnd, SW_HIDE);
+    sf::RenderWindow window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT),
+                            "Pathfinding Visualizer");
+    window.setFramerateLimit(60);
 
     if (!font.loadFromFile("assets/fonts/arvo.ttf")) {
-        cerr << "Failed to load font!" << endl;
+        cerr << "Failed to load font: assets/fonts/arvo.ttf\n";
         return EXIT_FAILURE;
     }
 
-    // Initialize grid
-    for (int y = 0; y < GRID_SIZE; y++) {
-        for (int x = 0; x < GRID_SIZE; x++) {
+    for (int y = 0; y < GRID_SIZE; ++y)
+        for (int x = 0; x < GRID_SIZE; ++x)
             grid[y][x] = Cell(x, y);
-        }
-    }
+
+    // Pre-compute button positions once (same formula as drawUI)
+    const float btnX = GRID_WIDTH + 20;
+    const float btnY = 20;
+    const vector<string> algoLabels = {"BFS", "DFS", "A*", "Dijkstra", "Greedy"};
+    const float mazeBtnY = btnY + 35 + algoLabels.size() * (BTN_HEIGHT + BTN_SPACING) + 15;
 
     while (window.isOpen()) {
         sf::Event event;
         while (window.pollEvent(event)) {
-            if (event.type == sf::Event::Closed) {
-                window.close();
-            }
-
-            sf::Vector2f mousePos = window.mapPixelToCoords(sf::Mouse::getPosition(window));
+            if (event.type == sf::Event::Closed) window.close();
 
             if (event.type == sf::Event::MouseButtonPressed) {
-                sf::Vector2f mousePos = window.mapPixelToCoords(sf::Mouse::getPosition(window));
-                // Handle Reset Grid Button
-                sf::RectangleShape resetBtn(sf::Vector2f(UI_WIDTH - 40, BTN_HEIGHT));
-                resetBtn.setPosition(WINDOW_WIDTH - UI_WIDTH + 20, WINDOW_HEIGHT - BTN_HEIGHT - 20);
+                sf::Vector2f mp = window.mapPixelToCoords(sf::Mouse::getPosition(window));
 
-                if (resetBtn.getGlobalBounds().contains(mousePos) && currentState == State::IDLE) {
-                    // Reset ALL cells to Empty
-                    for (auto& row : grid) {
-                        for (auto& cell : row) {
+                // ── Reset button ──────────────────────────────────────────────
+                sf::FloatRect resetBounds(btnX, WINDOW_HEIGHT - BTN_HEIGHT - 20,
+                                          UI_WIDTH - 40, BTN_HEIGHT);
+                if (resetBounds.contains(mp) && currentState == State::IDLE) {
+                    for (auto& row : grid)
+                        for (auto& cell : row)
                             cell.type = CellType::Empty;
-                        }
-                    }
-                    startPos = { -1, -1 };
-                    endPos = { -1, -1 };
-                    pathFound = false;
+                    startPos      = {-1, -1};
+                    endPos        = {-1, -1};
+                    pathFound     = false;
                     lastBenchmark = 0.0;
                     statusMessage = "Grid Reset";
+                    continue;
                 }
 
-                // Handle Pathfinding Algorithm Buttons
-                vector<sf::RectangleShape> algoBtns;
-                vector<string> algoLabels = { "BFS", "DFS", "A*", "Dijkstra", "Greedy" };
-                float btnX = WINDOW_WIDTH - UI_WIDTH + 20;
-                float mazeBtnY = 20 + 40 + (algoLabels.size() * (BTN_HEIGHT + BTN_SPACING)) + 20;
-                float btnY = 20;
-
+                // ── Algorithm buttons ─────────────────────────────────────────
+                bool clickedAlgo = false;
                 for (size_t i = 0; i < algoLabels.size(); ++i) {
-                    sf::RectangleShape btn(sf::Vector2f(UI_WIDTH - 40, BTN_HEIGHT));
-                    btn.setPosition(btnX, btnY + 40 + i * (BTN_HEIGHT + BTN_SPACING));
-                    algoBtns.push_back(btn);
+                    sf::FloatRect bounds(btnX,
+                                        btnY + 35 + i * (BTN_HEIGHT + BTN_SPACING),
+                                        UI_WIDTH - 40, BTN_HEIGHT);
+                    if (!bounds.contains(mp)) continue;
+                    clickedAlgo = true;
+                    if (currentState != State::IDLE) break;
 
-                    if (btn.getGlobalBounds().contains(mousePos) && currentState == State::IDLE) {
-                        currentState = State::VISUALIZING;
-                        currentAlgorithm = static_cast<Algorithm>(i);
-                        double duration;
-                        pathFound = Pathfinder::findPath(currentAlgorithm, window, duration);
-                        statusMessage = pathFound ? "Path found!" : "No path found";
-                        currentState = State::IDLE;
+                    // Crash fix: require start & end before running any algorithm
+                    if (startPos.first == -1 || endPos.first == -1) {
+                        statusMessage = "Place start & end first!";
+                        break;
                     }
+
+                    currentState      = State::VISUALIZING;
+                    currentAlgorithm  = static_cast<Algorithm>(i);
+                    double dur        = 0;
+                    pathFound         = Pathfinder::findPath(currentAlgorithm, window, dur);
+                    statusMessage     = pathFound ? "Path found!" : "No path found";
+                    currentState      = State::IDLE;
+                    break;
+                }
+                if (clickedAlgo) continue;
+
+                // ── Maze button ───────────────────────────────────────────────
+                sf::FloatRect mazeBounds(btnX, mazeBtnY, UI_WIDTH - 40, BTN_HEIGHT);
+                if (mazeBounds.contains(mp) && currentState == State::IDLE) {
+                    // Clear stale visited/path cells before generating
+                    for (auto& row : grid)
+                        for (auto& cell : row)
+                            if (cell.type == CellType::Visited || cell.type == CellType::Path)
+                                cell.type = CellType::Empty;
+                    MazeGenerator::generateRandomWalls(0.3);
+                    statusMessage = "Random maze generated";
+                    continue;
                 }
 
-                // Handle Maze Generation Button
-                sf::RectangleShape mazeBtn(sf::Vector2f(UI_WIDTH - 40, BTN_HEIGHT));
-                mazeBtn.setPosition(btnX, mazeBtnY);
-
-                if (mazeBtn.getGlobalBounds().contains(mousePos) && currentState == State::IDLE) {
-                    cout << "Maze Generation button clicked!" << endl; // Debug statement
-                    MazeGenerator::generateRandomWalls(0.3); // Generate random walls
-                    statusMessage = "Maze Generated";
-                }
-
-                // Handle grid editing
-                if (mousePos.x < WINDOW_WIDTH - UI_WIDTH) {
+                // ── Grid editing ──────────────────────────────────────────────
+                if (mp.x < GRID_WIDTH)
                     handleMouseClick(window, event.mouseButton);
-                }
             }
         }
 
-        // Rendering
         window.clear(Colors::Background);
         drawGrid(window);
         drawUI(window);
