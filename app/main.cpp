@@ -2,7 +2,7 @@
 //
 //   pathfinder-app
 //   pathfinder-app --screenshot out.png [--scene maze|walls|terrain] [--algorithm bfs]
-//                  [--seed 7] [--compare]
+//                  [--seed 7] [--compare] [--grid-tab]
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -72,10 +72,10 @@ enum class Drag { None, Wall, Mud, Erase, Start, Goal };
 int screenshot(int argc, char** argv, const sf::Font& font) {
     State s;
     const std::string_view scene = option(argc, argv, "--scene", "walls");
-    s.seed = std::atoi(option(argc, argv, "--seed", "1")) - 1;  // generate() increments it
-    app::generate(s, scene == "maze"      ? app::Generator::Maze
-                     : scene == "terrain" ? app::Generator::Terrain
-                                          : app::Generator::RandomWalls);
+    s.seed = std::atoi(option(argc, argv, "--seed", "1"));
+    s.generator = scene == "maze" ? app::Generator::Maze : scene == "terrain" ? app::Generator::Terrain : app::Generator::RandomWalls;
+    s.tab = has_flag(argc, argv, "--grid-tab") ? 1 : 0;
+    app::generate(s);
     const auto algorithm = parse_algorithm(option(argc, argv, "--algorithm", "bfs"));
     if (!algorithm) {
         std::fprintf(stderr, "unknown --algorithm (bfs, dfs, dijkstra, astar, greedy)\n");
@@ -87,10 +87,12 @@ int screenshot(int argc, char** argv, const sf::Font& font) {
     app::skip_to_end(s);
 
     sf::RenderTexture texture;
-    if (!texture.create(1200, 800)) return EXIT_FAILURE;
-    const sf::Vector2f size{1200, 800};
-    app::draw_scene(texture, s, app::layout_for(size, s.grid));
-    app::draw_panel(texture, s, font, size, {-1, -1}, false);
+    const sf::Vector2f size{1280, 840};
+    if (!texture.create(1280, 840)) return EXIT_FAILURE;
+    const app::Layout layout = app::layout_for(size, s.grid);
+    app::draw_scene(texture, s, layout);
+    app::draw_canvas_overlay(texture, s, layout, font);
+    app::draw_panel(texture, s, font, size, app::PanelInput{{-1, -1}, false, false});
     texture.display();
     const char* out = option(argc, argv, "--screenshot", "screenshot.png");
     if (!texture.getTexture().copyToImage().saveToFile(out)) return EXIT_FAILURE;
@@ -105,7 +107,7 @@ int main(int argc, char** argv) {
     if (!load_font(font)) return EXIT_FAILURE;
     if (std::string_view(option(argc, argv, "--screenshot", "")) != "") return screenshot(argc, argv, font);
 
-    sf::RenderWindow window(sf::VideoMode(1200, 800), "Pathfinding Visualizer");
+    sf::RenderWindow window(sf::VideoMode(1280, 840), "Pathfinding Visualizer");
     window.setVerticalSyncEnabled(true);
 
     State s;
@@ -119,7 +121,7 @@ int main(int argc, char** argv) {
     while (window.isOpen()) {
         const sf::Vector2f size{static_cast<float>(window.getSize().x), static_cast<float>(window.getSize().y)};
         const app::Layout layout = app::layout_for(size, s.grid);
-        bool clicked = false;
+        bool panel_pressed = false;
 
         sf::Event e;
         while (window.pollEvent(e)) {
@@ -133,6 +135,7 @@ int main(int argc, char** argv) {
                 if (key >= sf::Keyboard::Num1 && key <= sf::Keyboard::Num5)
                     app::run(s, pf::kAlgorithms[static_cast<std::size_t>(key - sf::Keyboard::Num1)]);
                 else if (key == sf::Keyboard::Space) app::run(s, s.algorithm);
+                else if (key == sf::Keyboard::A) app::compare_all(s);
                 else if (key == sf::Keyboard::P) s.paused = !s.paused;
                 else if (key == sf::Keyboard::E) app::skip_to_end(s);
                 else if (key == sf::Keyboard::C) app::clear_search(s);
@@ -140,7 +143,7 @@ int main(int argc, char** argv) {
             if (e.type == sf::Event::MouseButtonPressed) {
                 const sf::Vector2f at{static_cast<float>(e.mouseButton.x), static_cast<float>(e.mouseButton.y)};
                 if (at.x >= size.x - app::kPanelWidth) {
-                    clicked = e.mouseButton.button == sf::Mouse::Left;  // the panel handles it
+                    panel_pressed = e.mouseButton.button == sf::Mouse::Left;  // the panel handles it
                     continue;
                 }
                 const auto cell = layout.cell_at(at, s.grid);
@@ -150,7 +153,8 @@ int main(int argc, char** argv) {
                 if (e.mouseButton.button == sf::Mouse::Right) drag = Drag::Erase;
                 else if (*cell == s.start) drag = Drag::Start;
                 else if (*cell == s.goal) drag = Drag::Goal;
-                else drag = shift ? Drag::Mud : Drag::Wall;
+                else if (shift || s.tool == app::Tool::Mud) drag = Drag::Mud;
+                else drag = s.tool == app::Tool::Erase ? Drag::Erase : Drag::Wall;
                 stroking = false;
             }
             if (e.type == sf::Event::MouseButtonReleased) {
@@ -162,7 +166,7 @@ int main(int argc, char** argv) {
         // Hover and drag follow the mouse every frame.
         const sf::Vector2i mouse = sf::Mouse::getPosition(window);
         const sf::Vector2f at{static_cast<float>(mouse.x), static_cast<float>(mouse.y)};
-        s.hover = layout.cell_at(at, s.grid);
+        s.hover = s.dragging_slider >= 0 ? std::nullopt : layout.cell_at(at, s.grid);
         if (drag != Drag::None && s.hover) {
             const pf::Point p = *s.hover;
             if (drag == Drag::Start || drag == Drag::Goal) {
@@ -176,7 +180,7 @@ int main(int argc, char** argv) {
                 line(stroking ? last : p, p, [&](pf::Point q) {
                     if (q == s.start || q == s.goal) return;
                     s.grid.set_cost(q, drag == Drag::Wall  ? pf::Grid::kWall
-                                       : drag == Drag::Mud ? std::uint8_t{6}
+                                       : drag == Drag::Mud ? static_cast<std::uint8_t>(s.mud_cost)
                                                            : pf::Grid::kOpen);
                 });
                 last = p;
@@ -187,8 +191,10 @@ int main(int argc, char** argv) {
         }
 
         app::advance(s, clock.restart().asSeconds());
+        const bool held = window.hasFocus() && sf::Mouse::isButtonPressed(sf::Mouse::Left);
         app::draw_scene(window, s, layout);
-        app::draw_panel(window, s, font, size, at, clicked);
+        app::draw_canvas_overlay(window, s, layout, font);
+        app::draw_panel(window, s, font, size, app::PanelInput{at, panel_pressed, held});
         window.display();
     }
     return EXIT_SUCCESS;

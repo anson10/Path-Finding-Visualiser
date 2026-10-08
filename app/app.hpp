@@ -14,10 +14,11 @@
 
 namespace app {
 
-inline constexpr float kPanelWidth = 300.0f;
+inline constexpr float kPanelWidth = 320.0f;
 
-enum class Generator { Empty, Maze, RandomWalls, Terrain };
+enum class Generator { Empty, RandomWalls, Maze, Terrain };
 enum class Phase { Idle, Expanding, Tracing, Done };
+enum class Tool { Wall, Mud, Erase };
 
 struct Comparison {
     pf::Algorithm algorithm;
@@ -26,9 +27,15 @@ struct Comparison {
 };
 
 struct State {
+    // grid settings
+    int size = 41;  // cells per side; odd, so mazes fill the grid
     int cols = 41;
     int rows = 41;
     int seed = 1;
+    Generator generator = Generator::Empty;
+    float density = 0.30f;  // share of walls for random mazes and terrain
+    Tool tool = Tool::Wall;
+    int mud_cost = 6;
     pf::Grid grid{41, 41};
     pf::Point start{1, 1};
     pf::Point goal{39, 39};
@@ -44,10 +51,15 @@ struct State {
     std::vector<float> revealed_at;  // when each shown cell appeared, for the fade-in
     float speed = 600.0f;            // cells per second
     bool paused = false;
+    bool wavefront = true;           // shade visited cells by the order they were reached
 
     std::vector<Comparison> comparison;  // "Compare all" on the current grid
     std::string status = "Draw walls, then pick an algorithm";
     std::optional<pf::Point> hover;
+
+    // panel
+    int tab = 0;
+    int dragging_slider = -1;
 };
 
 // Where the grid sits in the window: left of the panel, centred, square cells.
@@ -58,7 +70,7 @@ struct Layout {
 };
 
 // model.cpp
-void generate(State& s, Generator generator);
+void generate(State& s);  // a new grid from the settings, same seed
 void run(State& s, pf::Algorithm algorithm);
 void compare_all(State& s);
 void clear_search(State& s);
@@ -70,9 +82,14 @@ void skip_to_end(State& s);
 Layout layout_for(sf::Vector2f window, const pf::Grid& grid);
 void draw_scene(sf::RenderTarget& target, const State& s, const Layout& layout);
 
-// panel.cpp: the side panel, drawn with SFML. `clicked` is true on the frame the left
-// button went down; buttons act on it directly.
-void draw_panel(sf::RenderTarget& target, State& s, const sf::Font& font, sf::Vector2f window,
-                sf::Vector2f mouse, bool clicked);
+void draw_canvas_overlay(sf::RenderTarget& target, const State& s, const Layout& layout, const sf::Font& font);
+
+// panel.cpp: the side panel, drawn with the ui widgets.
+struct PanelInput {
+    sf::Vector2f mouse;
+    bool pressed = false;  // left button went down this frame, over the panel
+    bool down = false;     // left button held
+};
+void draw_panel(sf::RenderTarget& target, State& s, const sf::Font& font, sf::Vector2f window, const PanelInput& in);
 
 }  // namespace app

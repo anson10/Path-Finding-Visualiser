@@ -9,7 +9,7 @@ where the algorithms actually differ.
 
 ![A* on random walls](docs/astar-walls.png)
 
-*A\* on random walls: light blue cells were visited, yellow is the path. Rendered by the app
+*A\* on random walls: visited cells shade from dark blue (first) to light blue (last), yellow is the path. Rendered by the app
 itself: `pathfinder-app --screenshot docs/astar-walls.png --scene walls --algorithm astar --seed 4`.*
 
 ## Design
@@ -118,13 +118,19 @@ build/pathfinder-app                # the visualiser
 Without SFML the library, tests and benchmark still build. `-DPATHFINDER_SANITIZE=ON` builds
 with sanitizers.
 
-**The app:** click an algorithm to run it; the visited cells fill in at a set number of
-cells per second (`-`/`+` in the panel), then the path traces back from the end. **Generate
-Random Maze**, **Perfect Maze** and **Weighted Terrain** build a new grid, **Compare All**
-lists the cost and cells visited of all five on the current one, **Reset Grid** clears it.
-Left-drag draws walls, shift-drag mud (cost 6), right-drag erases, and dragging the green or
-red cell moves the start or end. Keys: `1`–`5` run an algorithm, `Space` runs it again, `P`
-pauses, `E` skips to the end. The window can be resized.
+**The app:** the panel has two tabs.
+
+- **Search:** click an algorithm to run it (or `1`–`5`; `Space` runs it again). The visited
+  cells fill in at the replay speed, then the path traces back from the end. **Compare All**
+  (`A`) runs all five on the current grid and lists their cost and cells visited. Pause (`P`),
+  skip (`E`) or clear the replay; "Shade by visit order" colours visited cells from dark blue
+  (first) to light blue (last), so you can watch the search spread.
+- **Grid:** Empty, Random, Maze or Terrain, with sliders for size, wall density and seed.
+  Pick a drawing tool (Wall, Mud with its cost, Erase) and drag on the grid; right-drag
+  erases, shift-drag paints mud, and dragging the green or red cell moves the start or end.
+
+Hovering a cell shows its cost under the grid. The window can be resized, and Reset Grid
+clears everything.
 
 ## License
 
