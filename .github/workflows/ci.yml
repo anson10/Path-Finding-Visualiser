@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SFML and Ninja
+        run: sudo apt-get update && sudo apt-get install -y libsfml-dev ninja-build
+      - name: Configure (warnings are errors)
+        run: cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DPATHFINDER_WARNINGS_AS_ERRORS=ON
+      - name: Build library, tests, benchmark and app
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Benchmark (small, smoke run)
+        run: build/pathfinder-bench --size 101 --seeds 5
+
+  sanitizers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Configure with AddressSanitizer + UBSan
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DPATHFINDER_SANITIZE=ON -DPATHFINDER_BUILD_APP=OFF
+      - run: cmake --build build
+      - run: ctest --test-dir build --output-on-failure
