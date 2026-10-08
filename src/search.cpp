@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdlib>
 #include <functional>
 #include <limits>
@@ -96,9 +97,14 @@ SearchResult dfs(const Grid& grid, Point start, Point goal) {
 // queue entries are skipped on pop (lazy deletion) instead of decreasing keys.
 enum class Order { Cost, CostPlusHeuristic, Heuristic };
 
-SearchResult best_first(const Grid& grid, Point start, Point goal, Order order) {
+// Priorities are integers: costs times kScale, so a fractional A* weight stays exact enough
+// without floating-point ties.
+constexpr long long kScale = 1000;
+
+SearchResult best_first(const Grid& grid, Point start, Point goal, Order order, double weight = 1.0) {
     SearchResult result;
     const long long h_scale = order == Order::Cost ? 0 : min_cost(grid);
+    const long long w = std::llround(std::max(weight, 1.0) * kScale);
     auto h = [&](Point p) { return h_scale * manhattan(p, goal); };
 
     std::vector<int> parent(grid.size(), -1);
@@ -110,8 +116,8 @@ SearchResult best_first(const Grid& grid, Point start, Point goal, Order order) 
 
     auto priority = [&](long long g_cost, Point p) {
         switch (order) {
-            case Order::Cost: return g_cost;
-            case Order::CostPlusHeuristic: return g_cost + h(p);
+            case Order::Cost: return g_cost * kScale;
+            case Order::CostPlusHeuristic: return g_cost * kScale + w * h(p);
             case Order::Heuristic: return h(p);
         }
         return g_cost;
@@ -165,13 +171,13 @@ bool optimal_on(Algorithm algorithm, bool uniform_cost) noexcept {
     return false;
 }
 
-SearchResult search(const Grid& grid, Point start, Point goal, Algorithm algorithm) {
+SearchResult search(const Grid& grid, Point start, Point goal, Algorithm algorithm, double astar_weight) {
     if (!grid.passable(start) || !grid.passable(goal)) return {};
     switch (algorithm) {
         case Algorithm::BFS: return bfs(grid, start, goal);
         case Algorithm::DFS: return dfs(grid, start, goal);
         case Algorithm::Dijkstra: return best_first(grid, start, goal, Order::Cost);
-        case Algorithm::AStar: return best_first(grid, start, goal, Order::CostPlusHeuristic);
+        case Algorithm::AStar: return best_first(grid, start, goal, Order::CostPlusHeuristic, astar_weight);
         case Algorithm::Greedy: return best_first(grid, start, goal, Order::Heuristic);
     }
     return {};
