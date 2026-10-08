@@ -27,21 +27,25 @@ void clear_search(State& s) {
     s.revealed_at.clear();
 }
 
-void generate(State& s, Generator generator) {
-    const auto seed = static_cast<std::uint64_t>(++s.seed);
-    switch (generator) {
+void generate(State& s) {
+    s.cols = s.rows = s.size | 1;
+    const auto seed = static_cast<std::uint64_t>(s.seed);
+    switch (s.generator) {
         case Generator::Empty: s.grid = pf::Grid(s.cols, s.rows); break;
+        case Generator::RandomWalls: s.grid = pf::random_walls(s.cols, s.rows, s.density, seed); break;
         case Generator::Maze: s.grid = pf::perfect_maze(s.cols, s.rows, seed); break;
-        case Generator::RandomWalls: s.grid = pf::random_walls(s.cols, s.rows, 0.3, seed); break;
-        case Generator::Terrain: s.grid = pf::random_terrain(s.cols, s.rows, 0.15, 9, seed); break;
+        case Generator::Terrain: s.grid = pf::random_terrain(s.cols, s.rows, s.density / 2, 9, seed); break;
     }
+    s.start = {1, 1};
+    s.goal = {s.cols - 2, s.rows - 2};
     keep_endpoints_open(s);
     s.comparison.clear();
     clear_search(s);
 }
 
 void reset_grid(State& s) {
-    generate(s, Generator::Empty);
+    s.generator = Generator::Empty;
+    generate(s);
     s.status = "Grid reset";
 }
 

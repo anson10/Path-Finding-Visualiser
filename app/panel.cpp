@@ -1,27 +1,18 @@
-// The side panel, laid out like the original: algorithm buttons (click one to run it), the
-// maze buttons, results, and Reset Grid pinned to the bottom.
+// The side panel: a Search tab (run, compare, replay) and a Grid tab (generate, draw).
 #include <algorithm>
 #include <cstdio>
 #include <string>
 
 #include "app.hpp"
+#include "ui.hpp"
 
 namespace app {
 namespace {
 
-namespace colors {
-const sf::Color Panel(50, 50, 50);
-const sf::Color Button(70, 70, 70);
-const sf::Color ButtonHover(88, 88, 88);
-const sf::Color ButtonActive(0, 140, 210);  // selected algorithm
-const sf::Color Text(255, 255, 255);
-const sf::Color Dim(175, 175, 175);
-const sf::Color Good(120, 220, 120);
-const sf::Color Warning(255, 180, 0);
-}  // namespace colors
-
-constexpr float kButtonHeight = 40.0f;
-constexpr float kSpacing = 10.0f;
+using ui::colors::Dim;
+using ui::colors::Good;
+using ui::colors::Text;
+using ui::colors::Warning;
 
 std::string thousands(long long v) {
     std::string s = std::to_string(v);
@@ -29,130 +20,130 @@ std::string thousands(long long v) {
     return s;
 }
 
-// Immediate-mode drawing: each call draws one element at the cursor and moves it down.
-struct Panel {
-    sf::RenderTarget& target;
-    const sf::Font& font;
-    sf::Vector2f mouse;
-    bool clicked;
-    float x;
-    float y;
-    float width;
+std::string fixed(double v, int digits) {
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%.*f", digits, v);
+    return buf;
+}
 
-    void text(const std::string& s, unsigned size, sf::Color colour, float dx = 0, float dy = 0) {
-        sf::Text t(s, font, size);
-        t.setPosition(x + dx, y + dy);
-        t.setFillColor(colour);
-        target.draw(t);
+const char* hint(pf::Algorithm a) {
+    switch (a) {
+        case pf::Algorithm::BFS: return "Fewest steps; ignores mud";
+        case pf::Algorithm::DFS: return "Dives deep first; any path";
+        case pf::Algorithm::Dijkstra: return "Cheapest path; spreads evenly";
+        case pf::Algorithm::AStar: return "Cheapest path, aimed at the end";
+        case pf::Algorithm::Greedy: return "Rushes at the end; any path";
     }
+    return "";
+}
 
-    void title(const std::string& s) {
-        text(s, 22, colors::Text);
-        y += 35;
-    }
-
-    bool button(const std::string& label, bool active = false, unsigned size = 20, float w = 0, float h = kButtonHeight) {
-        const sf::FloatRect bounds(x, y, w > 0 ? w : width, h);
-        const bool over = bounds.contains(mouse);
-        sf::RectangleShape rect({bounds.width, bounds.height});
-        rect.setPosition(bounds.left, bounds.top);
-        rect.setFillColor(active ? colors::ButtonActive : over ? colors::ButtonHover : colors::Button);
-        target.draw(rect);
-        text(label, size, colors::Text, 10, (h - static_cast<float>(size)) / 2 - 3);
-        y += h + kSpacing;
-        return over && clicked;
-    }
-};
-
-}  // namespace
-
-void draw_panel(sf::RenderTarget& target, State& s, const sf::Font& font, sf::Vector2f window,
-                sf::Vector2f mouse, bool clicked) {
-    const float left = window.x - kPanelWidth;
-    sf::RectangleShape background({kPanelWidth, window.y});
-    background.setPosition(left, 0);
-    background.setFillColor(colors::Panel);
-    target.draw(background);
-
-    Panel p{target, font, mouse, clicked, left + 20, 20, kPanelWidth - 40};
-
-    // Algorithms: clicking one runs it, as before.
-    p.title("Pathfinding Algorithms");
-    for (pf::Algorithm a : pf::kAlgorithms) {
-        if (p.button(std::string(pf::name(a)), a == s.algorithm && s.phase != Phase::Idle, 20, 0, 36)) run(s, a);
-    }
-
-    // Grids
-    p.y += 5;
-    if (p.button("Generate Random Maze", false, 17, 0, 34)) {
-        generate(s, Generator::RandomWalls);
-        s.status = "Random maze generated";
-    }
-    if (p.button("Perfect Maze", false, 17, 0, 34)) {
-        generate(s, Generator::Maze);
-        s.status = "Perfect maze generated";
-    }
-    if (p.button("Weighted Terrain", false, 17, 0, 34)) {
-        generate(s, Generator::Terrain);
-        s.status = "Browner cells cost more";
-    }
-    if (p.button("Compare All", false, 17, 0, 34)) compare_all(s);
-
-    // Results
-    p.y += 5;
-    p.title("Results");
-    char line[96];
+void results(ui::Ui& u, State& s) {
+    u.heading("RESULTS");
     if (!s.comparison.empty()) {
-        p.text("cost", 15, colors::Dim, 110);
-        p.text("visited", 15, colors::Dim, 175);
-        p.y += 22;
+        u.text("cost", 15, Dim, 120);
+        u.text("visited", 15, Dim, 190);
+        u.gap(22);
         long long best = -1;
         for (const auto& c : s.comparison)
             if (c.result.found && (best < 0 || c.result.cost < best)) best = c.result.cost;
         for (const auto& c : s.comparison) {
-            const bool selected = c.algorithm == s.algorithm;
-            p.text(std::string(pf::name(c.algorithm)), 17, selected ? colors::ButtonActive : colors::Text);
-            p.text(c.result.found ? thousands(c.result.cost) : "-", 17,
-                   !c.result.found ? colors::Dim : c.result.cost == best ? colors::Good : colors::Warning, 110);
-            p.text(thousands(static_cast<long long>(c.result.nodes_expanded())), 17, colors::Text, 175);
-            p.y += 22;
+            const bool sel = c.algorithm == s.algorithm;
+            u.text(std::string(pf::name(c.algorithm)), 17, sel ? ui::colors::Accent : Text);
+            u.text(c.result.found ? thousands(c.result.cost) : "-", 17,
+                   !c.result.found ? Dim : c.result.cost == best ? Good : Warning, 120);
+            u.text(thousands(static_cast<long long>(c.result.nodes_expanded())), 17, Text, 190);
+            u.gap(23);
         }
-        p.y += 4;
-    } else {
-        std::snprintf(line, sizeof line, "Time:   %.3f ms", s.search_ms);
-        p.text(line, 18, colors::Text);
-        p.y += 24;
-        p.text("Status: " + s.status, 18, colors::Text);
-        p.y += 24;
-        if (s.phase != Phase::Idle && s.result.found) {
-            p.text("Cost:   " + thousands(s.result.cost) + "  (" + thousands(static_cast<long long>(s.result.path.size())) + " cells)", 18, colors::Text);
-            p.y += 24;
-        }
-        if (s.phase != Phase::Idle) {
-            p.text("Visited: " + thousands(static_cast<long long>(s.result.nodes_expanded())) + " cells", 18, colors::Text);
-            p.y += 24;
-        }
+        u.text("green: cheapest   amber: costlier", 14, Dim);
+        u.gap(24);
+        return;
     }
+    u.line("Status:   " + s.status);
+    if (s.phase == Phase::Idle) return;
+    if (s.result.found)
+        u.line("Cost:      " + thousands(s.result.cost) + "  (" + thousands(static_cast<long long>(s.result.path.size())) + " cells)");
+    u.line("Visited:  " + thousands(static_cast<long long>(s.result.nodes_expanded())) + " cells");
+    u.line("Time:      " + fixed(s.search_ms, 3) + " ms");
+}
 
-    // Replay speed: small - and + buttons around the number
-    p.y += 4;
-    const float row = p.y;
-    if (p.button("-", false, 20, 34, 30)) s.speed = std::max(25.0f, s.speed / 2);
-    p.y = row;
-    std::snprintf(line, sizeof line, "%s%.0f cells/s", s.paused ? "paused  " : "", s.speed);
-    p.text(line, 16, colors::Dim, 46, 5);
-    p.x += p.width - 34;
-    if (p.button("+", false, 20, 34, 30)) s.speed = std::min(50000.0f, s.speed * 2);
-    p.x -= p.width - 34;
+void search_tab(ui::Ui& u, State& s) {
+    u.heading("ALGORITHM   (click to run)");
+    for (std::size_t i = 0; i < pf::kAlgorithms.size(); ++i) {
+        const pf::Algorithm a = pf::kAlgorithms[i];
+        const std::string label = std::to_string(i + 1) + "   " + std::string(pf::name(a));
+        if (u.button(label, a == s.algorithm && s.phase != Phase::Idle, 0, 34)) run(s, a);
+        u.tooltip(hint(a));
+    }
+    if (u.button("Compare All", false, 0, 34)) compare_all(s);
+    u.tooltip("Run all five on this grid  (A)");
+    u.gap(4);
 
-    // Reset Grid and the controls, pinned to the bottom (or below the results if the
-    // window is too short for both).
-    p.y = std::max(p.y + 6, window.y - kButtonHeight - 20 - 44);
-    p.text("Left: wall   Shift: mud   Right: erase", 14, colors::Dim);
-    p.y += 18;
-    p.text("Space: run again   P: pause   E: skip", 14, colors::Dim);
-    p.y = std::max(p.y + 24, window.y - kButtonHeight - 20);
-    if (p.button("Reset Grid")) reset_grid(s);
+    results(u, s);
+    u.gap(6);
+
+    u.heading("REPLAY");
+    u.slider("Speed", s.speed, 25.0f, 50000.0f, thousands(static_cast<long long>(s.speed)) + " cells/s", true);
+    switch (u.button_row({s.paused ? "Resume" : "Pause", "Skip", "Clear"})) {
+        case 0: s.paused = !s.paused; break;
+        case 1: skip_to_end(s); break;
+        case 2: clear_search(s); break;
+        default: break;
+    }
+    u.toggle("Shade by visit order", s.wavefront);
+    u.tooltip("Dark blue first, light blue last");
+}
+
+void grid_tab(ui::Ui& u, State& s) {
+    u.heading("GENERATE");
+    const int picked = u.button_row({"Empty", "Random", "Maze", "Terrain"}, static_cast<int>(s.generator), 34, 15);
+    if (picked >= 0) {
+        s.generator = static_cast<Generator>(picked);
+        if (s.generator != Generator::Empty) ++s.seed;  // a fresh layout each click
+        generate(s);
+        s.status = "Grid generated";
+    }
+    if (u.slider("Size", s.size, 11, 101, 2)) generate(s);
+    u.tooltip("Cells per side");
+    if (s.generator == Generator::RandomWalls || s.generator == Generator::Terrain) {
+        if (u.slider("Walls", s.density, 0.0f, 0.5f, fixed(100.0 * s.density, 0) + "%")) generate(s);
+    }
+    if (u.slider("Seed", s.seed, 1, 999)) generate(s);
+    if (u.button("New seed", false, 0, 32, 16)) {
+        s.seed = 1 + (s.seed * 7919 + 13) % 999;
+        generate(s);
+    }
+    u.gap(6);
+
+    u.heading("DRAW");
+    int tool = static_cast<int>(s.tool);
+    if (u.segmented({"Wall", "Mud", "Erase"}, tool)) s.tool = static_cast<Tool>(tool);
+    if (s.tool == Tool::Mud) u.slider("Mud cost", s.mud_cost, 2, 9);
+    u.line("Drag on the grid to draw.", Dim, 15);
+    u.line("Right-drag erases; drag the green", Dim, 15);
+    u.line("or red cell to move start or end.", Dim, 15);
+}
+
+}  // namespace
+
+void draw_panel(sf::RenderTarget& target, State& s, const sf::Font& font, sf::Vector2f window, const PanelInput& in) {
+    const float left = window.x - kPanelWidth;
+    sf::RectangleShape background({kPanelWidth, window.y});
+    background.setPosition(left, 0);
+    background.setFillColor(ui::colors::Panel);
+    target.draw(background);
+
+    const ui::Input input{in.mouse, in.pressed, in.down};
+    ui::Ui u(target, font, input, s.dragging_slider, {left + 20, 16}, kPanelWidth - 40);
+    u.text("Pathfinding Visualizer", 22, Text);
+    u.gap(38);
+    u.tabs({"Search", "Grid"}, s.tab);
+    if (s.tab == 0) search_tab(u, s);
+    else grid_tab(u, s);
+
+    // Reset Grid stays at the bottom, as before (or below the content in a short window).
+    u.set_y(std::max(u.y() + 8, window.y - 56));
+    if (u.button("Reset Grid", false, 0, 40, 20)) reset_grid(s);
+    u.finish();
 }
 
 }  // namespace app
