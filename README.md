@@ -1,262 +1,125 @@
-# Pathfinding Visualizer
-![Screenshot](assets/images/program.png) 
+# Pathfinding Visualiser
 
-## Table of Contents
-1. [Introduction](#introduction)
-2. [Features](#features)
-3. [Algorithms Explained](#algorithms-explained)
-   - [Breadth-First Search (BFS)](#breadth-first-search-bfs)
-   - [Depth-First Search (DFS)](#depth-first-search-dfs)
-   - [A* Algorithm](#a-algorithm)
-   - [Dijkstra's Algorithm](#dijkstras-algorithm)
-   - [Greedy Best-First Search](#greedy-best-first-search)
-4. [How to Use](#how-to-use)
-5. [Folder Structure](#folder-structure)
-6. [Dependencies](#dependencies)
-7. [License](#license)
+[![ci](https://github.com/anson10/Path-Finding-Visualiser/actions/workflows/ci.yml/badge.svg)](https://github.com/anson10/Path-Finding-Visualiser/actions/workflows/ci.yml)
 
----
+Five grid search algorithms (BFS, DFS, Dijkstra, A*, greedy best-first) as a small C++20
+library, an SFML front end that replays their searches, property tests and a headless
+benchmark. Cells carry an entry cost, so the grid can be a maze or weighted terrain, which is
+where the algorithms actually differ.
 
-## Introduction
-This project is a **Pathfinding Visualizer** that demonstrates various pathfinding algorithms in action. It allows users to visualize how different algorithms find the shortest path between a start and end point on a grid. The project is built using **C++** and **SFML** for graphics.
+![A* on random walls](docs/astar-walls.png)
 
----
+*A\* on 30% random walls: blue cells were expanded, yellow is the path. Rendered by
+`pathfinder-app --screenshot docs/astar-walls.png --scene walls --algorithm astar --seed 4`.*
 
-## Features
-- **Interactive Grid**: Place walls, set start/end points, and generate random mazes.
-- **Multiple Algorithms**: Visualize BFS, DFS, A*, Dijkstra, and Greedy Best-First Search.
-- **Real-Time Visualization**: Watch the algorithm explore the grid step-by-step.
-- **Benchmarking**: Measure the time taken by each algorithm to find the path.
+## Design
 
----
-
-## Algorithms Explained
-
-### Breadth-First Search (BFS)
-BFS explores all neighboring nodes at the present depth before moving on to nodes at the next depth level. It guarantees the shortest path in an unweighted graph.
-
-#### How It Works:
-1. Start at the initial node.
-2. Explore all neighbors at the current depth.
-3. Move to the next level of neighbors.
-
-#### Pseudocode:
-```python
-queue = [start]
-visited = set(start)
-
-while queue:
-    node = queue.pop(0)
-    if node == goal:
-        return path
-    for neighbor in neighbors(node):
-        if neighbor not in visited:
-            visited.add(neighbor)
-            queue.append(neighbor)
+```
+include/pathfinder/   grid.hpp (grid, generators), search.hpp (search API)
+src/                  the library: no graphics, no I/O
+app/                  SFML visualiser: draws and replays, never searches step by step
+tests/                Catch2 property tests
+bench/                headless benchmark
 ```
 
-#### Visualization:
-```
-S -> 1 -> 2 -> 3
-     |    |    |
-     4 -> 5 -> 6
-          |    |
-          7 -> G
-```
+- **Search returns data.** `pf::search(grid, start, goal, algorithm)` returns the path, its
+  cost and the order in which cells were expanded. The app replays that order a few cells
+  per frame, so the window stays responsive. The timing it shows, and everything the
+  benchmark measures, is the search alone, with no drawing in the loop.
+- **One cost model for every algorithm.** Each cell costs 0 (wall) or 1–255 to enter, and
+  neighbours are visited in a fixed order. So a difference between two algorithms comes from
+  the algorithm, not from tie order or bookkeeping.
+- **Expanded means closed.** A cell counts as expanded when it leaves the frontier, not when
+  it is queued, and is expanded at most once (Dijkstra, A* and greedy skip stale queue
+  entries). That makes "cells expanded" comparable across algorithms; a test checks it.
+- **A\* stays optimal on weighted grids.** Its Manhattan heuristic is scaled by the cheapest
+  cell cost, so it never overestimates. Ties go to the deeper node.
+- **Mazes are perfect mazes,** carved by iterative recursive backtracking: exactly one path
+  between any two open cells (a test checks it is a spanning tree). Random walls and weighted
+  terrain are the other two generators. All three are seeded and deterministic.
 
----
+## Results
 
-### Depth-First Search (DFS)
-DFS explores as far as possible along each branch before backtracking. It does **not** guarantee the shortest path.
+`build/pathfinder-bench` on 501×501 grids, start (1,1) to goal (499,499), 25 seeds per
+scenario (grids without a path are dropped), Release build with GCC 11 on a laptop (WSL2).
+Times are medians and vary between machines; cells expanded and path costs don't.
 
-#### How It Works:
-1. Start at the initial node.
-2. Explore one neighbor as far as possible.
-3. Backtrack and explore other neighbors.
+**Random walls, 30% density, uniform cost**
 
-#### Pseudocode:
-```python
-stack = [start]
-visited = set(start)
+| Algorithm | Time (ms) | Cells expanded | Path cost vs optimum |
+|---|---|---|---|
+| BFS | 12.1 | 172,494 | optimal |
+| DFS | 1.9 | 33,962 | +1,839% |
+| Dijkstra | 34.7 | 172,495 | optimal |
+| A* | 5.9 | 18,961 | optimal |
+| Greedy | 0.8 | 1,893 | +33% |
 
-while stack:
-    node = stack.pop()
-    if node == goal:
-        return path
-    for neighbor in neighbors(node):
-        if neighbor not in visited:
-            visited.add(neighbor)
-            stack.append(neighbor)
-```
+**Weighted terrain, costs 1–9, 20% walls**
 
-#### Visualization:
-```
-S -> 1 -> 2 -> 3
-          |
-          4 -> 5 -> G
-```
+| Algorithm | Time (ms) | Cells expanded | Path cost vs optimum |
+|---|---|---|---|
+| BFS | 11.3 | 200,395 | +45% |
+| DFS | 1.4 | 30,870 | +3,484% |
+| Dijkstra | 44.3 | 200,394 | optimal |
+| A* | 49.0 | 200,386 | optimal |
+| Greedy | 0.7 | 1,149 | +77% |
 
----
+What the numbers say:
 
-### A* Algorithm
-A* is a heuristic-based algorithm that combines the advantages of Dijkstra's algorithm and Greedy Best-First Search. It uses a cost function `f(n) = g(n) + h(n)`, where:
-- `g(n)` is the cost from the start node to the current node.
-- `h(n)` is the heuristic estimate of the cost from the current node to the goal.
+- **On uniform cost, A\* expands 11% of the cells BFS and Dijkstra do** and is 6× faster than
+  Dijkstra, with the same optimal path.
+- **On weighted terrain A\* gains nothing.** Its admissible heuristic (distance × the minimum
+  cost, 1) is far below the average cost of a step (~5), so it barely guides the search: it
+  expands as much as Dijkstra and pays for computing the heuristic. A tighter heuristic would
+  give up the optimality guarantee.
+- **BFS ignores cost.** On terrain it takes 45% more expensive paths. It is still the fastest
+  optimal search on uniform grids, since a FIFO queue is cheaper than a heap.
+- **Greedy is fastest and wrong,** 33–77% off the optimum. DFS is worse.
+- In a perfect maze every algorithm finds the only path; A* saves 3% of the expansions.
 
-#### Heuristic (Manhattan Distance):
-```
-h(n) = |x1 - x2| + |y1 - y2|
-```
+| BFS on terrain: path cost 369 | Dijkstra on the same grid: path cost 237 |
+|---|---|
+| ![BFS on weighted terrain](docs/bfs-terrain.png) | ![Dijkstra on weighted terrain](docs/dijkstra-terrain.png) |
 
-#### How It Works:
-1. Start at the initial node.
-2. Evaluate the cost `f(n)` for all neighbors.
-3. Move to the node with the lowest `f(n)`.
+## Tests
 
-#### Pseudocode:
-```python
-open_set = {start}
-g_score = {start: 0}
-f_score = {start: h(start)}
+`ctest --test-dir build` runs 13 Catch2 test cases (about 1,850 assertions), most of them
+properties checked on hundreds of seeded random grids:
 
-while open_set:
-    current = node in open_set with lowest f_score
-    if current == goal:
-        return path
-    open_set.remove(current)
-    for neighbor in neighbors(current):
-        tentative_g = g_score[current] + d(current, neighbor)
-        if tentative_g < g_score[neighbor]:
-            g_score[neighbor] = tentative_g
-            f_score[neighbor] = tentative_g + h(neighbor)
-            open_set.add(neighbor)
-```
+- every returned path is a valid walk of passable neighbours, with the reported cost;
+- all algorithms agree on whether the goal is reachable; a walled-off goal is "not found"
+  after exploring exactly the reachable cells;
+- A* always matches Dijkstra's cost and never expands more cells;
+- on uniform cost BFS is optimal, and DFS and greedy never beat it; on terrain BFS is not
+  (a hand-built case where the short route is the expensive one);
+- every cell is expanded at most once;
+- a perfect maze is connected and a tree.
 
-#### Visualization:
-```
-S -> 1 -> 2 -> 3
-     |    |    |
-     4 -> 5 -> 6
-          |    |
-          7 -> G
-```
+The tests catch a broken algorithm, not just a crash: making the A* heuristic overestimate
+(×3) fails the A*-matches-Dijkstra property. CI builds with GCC and Clang (warnings as
+errors) and runs the tests again under AddressSanitizer and UBSan.
 
----
+## Build and run
 
-### Dijkstra's Algorithm
-Dijkstra's algorithm finds the shortest path in a weighted graph. It uses a priority queue to always expand the least-cost node.
+Needs CMake 3.20+, a C++20 compiler and, for the app only, SFML 2.5 or 2.6 (`sudo apt install
+libsfml-dev`). Catch2 is fetched by CMake.
 
-#### How It Works:
-1. Start at the initial node.
-2. Assign a tentative cost to all nodes (infinity for all except the start node).
-3. At each step, select the node with the lowest tentative cost.
-4. Update the costs of its neighbors.
-
-#### Pseudocode:
-```python
-priority_queue = {start: 0}
-distances = {start: 0}
-
-while priority_queue:
-    current = node in priority_queue with lowest cost
-    if current == goal:
-        return path
-    for neighbor in neighbors(current):
-        new_cost = distances[current] + d(current, neighbor)
-        if new_cost < distances[neighbor]:
-            distances[neighbor] = new_cost
-            priority_queue[neighbor] = new_cost
+```bash
+cmake -S . -B build -G Ninja
+cmake --build build
+ctest --test-dir build              # tests
+build/pathfinder-bench              # benchmark (--size N --seeds K)
+build/pathfinder-app                # the visualiser
 ```
 
-#### Visualization:
-```
-S -> 1 -> 2 -> 3
-     |    |    |
-     4 -> 5 -> 6
-          |    |
-          7 -> G
-```
+Without SFML the library, tests and benchmark still build. `-DPATHFINDER_SANITIZE=ON` builds
+with sanitizers.
 
----
-
-### Greedy Best-First Search
-Greedy Best-First Search uses a heuristic to prioritize nodes that are closer to the goal. It does **not** guarantee the shortest path.
-
-#### How It Works:
-1. Start at the initial node.
-2. Always expand the node that appears to be closest to the goal.
-
-#### Pseudocode:
-```python
-priority_queue = {start: h(start)}
-visited = set(start)
-
-while priority_queue:
-    current = node in priority_queue with lowest h(n)
-    if current == goal:
-        return path
-    for neighbor in neighbors(current):
-        if neighbor not in visited:
-            visited.add(neighbor)
-            priority_queue[neighbor] = h(neighbor)
-```
-
-#### Visualization:
-```
-S -> 1 -> 2 -> 3
-          |
-          4 -> 5 -> G
-```
-
----
-
-## How to Use
-1. **Set Start/End Points**:
-   - Left-click to place the start and end points.
-2. **Place Walls**:
-   - Left-click to place walls.
-   - Right-click to remove walls.
-3. **Generate Random Walls**:
-   - Click the "Maze Generation" button to generate random walls.
-4. **Run Algorithms**:
-   - Select an algorithm from the "Pathfinding Algorithms" section.
-   - Watch the algorithm find the path in real-time.
-5. **Reset Grid**:
-   - Click the "Reset Grid" button to clear the grid.
-
----
-
-## Folder Structure
-```
-PathfindingVisualizer/
-├── bin/                  # Compiled executable and dependencies
-│   ├── PathfindingVisualizer.exe
-│   ├── sfml-graphics.dll
-│   ├── sfml-window.dll
-│   ├── sfml-system.dll
-│   └── ...
-├── assets/               # Assets (fonts, images, etc.)
-│   ├── fonts/
-│   │   └── arvo.ttf
-│   ├── images/
-│        └── program.png
-│   
-├── Source/               # Source code 
-│   └── main.cpp
-└── README.md             # This file
-```
-
----
-
-## Dependencies
-- **SFML 2.6.0**: Graphics and window management.
-- **C++17**: Required for modern C++ features.
-
----
+**Controls:** pick an algorithm with the buttons or `1`–`5`, run with `Space`. Drag to draw
+walls, shift-drag for expensive "mud" (cost 5), right-drag to erase, drag `S` and `G` to move
+them. `M` maze, `R` random walls, `T` weighted terrain, `C` clear the search, `X` clear all,
+`+`/`-` replay speed.
 
 ## License
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
----
-
-Enjoy visualizing pathfinding algorithms! 🚀
+MIT
