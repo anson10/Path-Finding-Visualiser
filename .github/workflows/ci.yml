@@ -14,8 +14,8 @@ jobs:
         compiler: [g++, clang++]
     steps:
       - uses: actions/checkout@v4
-      - name: Install SFML and Ninja
-        run: sudo apt-get update && sudo apt-get install -y libsfml-dev ninja-build
+      - name: Install SFML, OpenGL and Ninja
+        run: sudo apt-get update && sudo apt-get install -y libsfml-dev libgl-dev ninja-build
       - name: Configure (warnings are errors)
         run: cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DPATHFINDER_WARNINGS_AS_ERRORS=ON
       - name: Build library, tests, benchmark and app

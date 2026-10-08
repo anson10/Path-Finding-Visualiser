@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.25)
 project(pathfinder VERSION 2.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -49,11 +49,25 @@ endif()
 
 if(PATHFINDER_BUILD_APP)
   find_package(SFML 2.5 COMPONENTS graphics window system QUIET)
-  if(SFML_FOUND)
-    add_executable(pathfinder-app app/main.cpp app/view.cpp)
-    target_link_libraries(pathfinder-app PRIVATE pathfinder pathfinder_options sfml-graphics sfml-window sfml-system)
+  find_package(OpenGL QUIET)
+  if(SFML_FOUND AND OpenGL_FOUND)
+    include(FetchContent)
+    # Dear ImGui for the side panel, through its SFML backend. SYSTEM: their headers are not
+    # held to this project's warning flags.
+    FetchContent_Declare(imgui GIT_REPOSITORY https://github.com/ocornut/imgui.git GIT_TAG v1.89.9
+                         GIT_SHALLOW TRUE SYSTEM)
+    FetchContent_MakeAvailable(imgui)
+    set(IMGUI_DIR ${imgui_SOURCE_DIR})
+    set(IMGUI_SFML_FIND_SFML OFF)
+    FetchContent_Declare(imgui-sfml GIT_REPOSITORY https://github.com/SFML/imgui-sfml.git GIT_TAG v2.6.1
+                         GIT_SHALLOW TRUE SYSTEM)
+    FetchContent_MakeAvailable(imgui-sfml)
+
+    add_executable(pathfinder-app app/main.cpp app/model.cpp app/scene.cpp app/panel.cpp)
+    target_link_libraries(pathfinder-app PRIVATE pathfinder pathfinder_options ImGui-SFML::ImGui-SFML
+                          sfml-graphics sfml-window sfml-system)
     target_compile_definitions(pathfinder-app PRIVATE PATHFINDER_ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/assets")
   else()
-    message(STATUS "SFML not found: skipping pathfinder-app (library, tests and benchmark still build)")
+    message(STATUS "SFML or OpenGL not found: skipping pathfinder-app (library, tests and benchmark still build)")
   endif()
 endif()
