@@ -28,9 +28,14 @@ bool has_flag(int argc, char** argv, const char* name) {
     return false;
 }
 
-bool load_font(sf::Font& font) {
-    for (const char* dir : {"assets", PATHFINDER_ASSETS})
-        if (font.loadFromFile(std::string(dir) + "/fonts/arvo.ttf")) return true;
+// The font is looked up next to the executable (released builds), in the working directory,
+// then in the source tree (development builds).
+bool load_font(sf::Font& font, const char* argv0) {
+    std::string exe_dir(argv0 ? argv0 : "");
+    const auto slash = exe_dir.find_last_of("/\\");
+    exe_dir = slash == std::string::npos ? "." : exe_dir.substr(0, slash);
+    for (const std::string& dir : {exe_dir + "/assets", std::string("assets"), std::string(PATHFINDER_ASSETS)})
+        if (font.loadFromFile(dir + "/fonts/arvo.ttf")) return true;
     std::fprintf(stderr, "Failed to load font: assets/fonts/arvo.ttf\n");
     return false;
 }
@@ -105,7 +110,7 @@ int screenshot(int argc, char** argv, const sf::Font& font) {
 
 int main(int argc, char** argv) {
     sf::Font font;
-    if (!load_font(font)) return EXIT_FAILURE;
+    if (!load_font(font, argc > 0 ? argv[0] : nullptr)) return EXIT_FAILURE;
     if (std::string_view(option(argc, argv, "--screenshot", "")) != "") return screenshot(argc, argv, font);
 
     sf::RenderWindow window(sf::VideoMode(1280, 840), "Pathfinding Visualizer");
