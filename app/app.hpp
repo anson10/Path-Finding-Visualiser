@@ -40,6 +40,7 @@ struct State {
     pf::Point start{1, 1};
     pf::Point goal{39, 39};
     pf::Algorithm algorithm = pf::Algorithm::BFS;
+    float astar_weight = 1.0f;  // > 1: weighted A*, faster, at most this many times the optimum
 
     // the last search and its replay
     pf::SearchResult result;

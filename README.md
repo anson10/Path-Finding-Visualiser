@@ -33,7 +33,8 @@ bench/                headless benchmark
   it is queued, and is expanded at most once (Dijkstra, A* and greedy skip stale queue
   entries). That makes "cells expanded" comparable across algorithms; a test checks it.
 - **A\* stays optimal on weighted grids.** Its Manhattan heuristic is scaled by the cheapest
-  cell cost, so it never overestimates. Ties go to the deeper node.
+  cell cost, so it never overestimates. Ties go to the deeper node. An optional weight w turns
+  it into weighted A* (g + w·h), bounded at w times the optimum.
 - **Mazes are perfect mazes,** carved by iterative recursive backtracking: exactly one path
   between any two open cells (a test checks it is a spanning tree). Random walls and weighted
   terrain are the other two generators. All three are seeded and deterministic.
@@ -48,58 +49,70 @@ Times are medians and vary between machines; cells expanded and path costs don't
 
 | Algorithm | Time (ms) | Cells expanded | Path cost vs optimum |
 |---|---|---|---|
-| BFS | 12.1 | 172,494 | optimal |
-| DFS | 1.9 | 33,962 | +1,839% |
-| Dijkstra | 34.7 | 172,495 | optimal |
-| A* | 5.9 | 18,961 | optimal |
-| Greedy | 0.8 | 1,893 | +33% |
+| BFS | 17.3 | 172,494 | optimal |
+| DFS | 2.9 | 33,962 | +1,839% |
+| Dijkstra | 45.3 | 172,495 | optimal |
+| A* | 7.1 | 18,961 | optimal |
+| Greedy | 1.3 | 1,893 | +33% |
+| A* w=1.5 | 2.0 | 2,454 | +8.8% |
+| A* w=2 | 1.5 | 2,275 | +16% |
+| A* w=5 | 1.4 | 1,925 | +27% |
 
 **Weighted terrain, costs 1–9, 20% walls**
 
 | Algorithm | Time (ms) | Cells expanded | Path cost vs optimum |
 |---|---|---|---|
-| BFS | 11.3 | 200,395 | +45% |
-| DFS | 1.4 | 30,870 | +3,484% |
-| Dijkstra | 44.3 | 200,394 | optimal |
-| A* | 49.0 | 200,386 | optimal |
-| Greedy | 0.7 | 1,149 | +77% |
+| BFS | 14.7 | 200,395 | +45% |
+| DFS | 2.2 | 30,870 | +3,484% |
+| Dijkstra | 60.8 | 200,394 | optimal |
+| A* | 72.2 | 200,386 | optimal |
+| Greedy | 1.3 | 1,149 | +77% |
+| A* w=2 | 73.1 | 200,329 | +0.1% |
+| A* w=3 | 68.8 | 158,289 | +0.6% |
+| A* w=5 | 1.3 | 1,431 | +13.7% |
 
 What the numbers say:
 
 - **On uniform cost, A\* expands 11% of the cells BFS and Dijkstra do** and is 6× faster than
   Dijkstra, with the same optimal path.
-- **On weighted terrain A\* gains nothing.** Its admissible heuristic (distance × the minimum
-  cost, 1) is far below the average cost of a step (~5), so it barely guides the search: it
-  expands as much as Dijkstra and pays for computing the heuristic. A tighter heuristic would
-  give up the optimality guarantee.
+- **On weighted terrain plain A\* gains nothing.** Its admissible heuristic (distance × the
+  cheapest cell cost, 1) is far below the average cost of a step (~5), so it barely guides the
+  search: it expands as much as Dijkstra and pays for computing the heuristic.
+- **Weighted A\* fixes that, at a bounded price.** Ordering by g + w·h gives up optimality but
+  guarantees a path at most w times the cheapest (a test checks the bound on random grids). On
+  terrain nothing happens until w approaches the average step cost: at w = 3 it still expands
+  158k cells, at **w = 5 it expands 1,431 (140× fewer than Dijkstra) and runs 45× faster, for a
+  path 13.7% costlier**. On uniform grids w = 1.5 already cuts expansions 7.7× for +8.8%.
 - **BFS ignores cost.** On terrain it takes 45% more expensive paths. It is still the fastest
   optimal search on uniform grids, since a FIFO queue is cheaper than a heap.
 - **Greedy is fastest and wrong,** 33–77% off the optimum. DFS is worse.
-- In a perfect maze every algorithm finds the only path; A* saves 3% of the expansions.
+- In a perfect maze every algorithm finds the only path; even w = 5 saves only 11% of A*'s
+  expansions, because a maze leaves no shortcut to aim for.
 
-**Compare All** runs the five algorithms on the grid on screen. On this weighted terrain
-(browner cells cost more) BFS pays 389 and greedy 430, while Dijkstra and A* both find the
-optimum of 253; A* visits 1,433 cells against Dijkstra's 1,440, the weak-heuristic effect from
-the table above:
+**Compare All** runs the five algorithms on the grid on screen. On this weighted terrain BFS
+pays 389 and greedy 430, Dijkstra finds the optimum of 253 after visiting 1,440 cells, and A*
+with weight 5 finds a path of 270 (7% more) after visiting only 84:
 
 ![All five algorithms on weighted terrain](docs/terrain-compare.png)
 
 ## Tests
 
-`ctest --test-dir build` runs 13 Catch2 test cases (about 1,850 assertions), most of them
+`ctest --test-dir build` runs 15 Catch2 test cases (about 2,650 assertions), most of them
 properties checked on hundreds of seeded random grids:
 
 - every returned path is a valid walk of passable neighbours, with the reported cost;
 - all algorithms agree on whether the goal is reachable; a walled-off goal is "not found"
   after exploring exactly the reachable cells;
-- A* always matches Dijkstra's cost and never expands more cells;
+- A* always matches Dijkstra's cost and never expands more cells; weighted A* stays within
+  w times the optimum for w from 1.2 to 5, and weight 1 is exactly plain A*;
 - on uniform cost BFS is optimal, and DFS and greedy never beat it; on terrain BFS is not
   (a hand-built case where the short route is the expensive one);
 - every cell is expanded at most once;
 - a perfect maze is connected and a tree.
 
 The tests catch a broken algorithm, not just a crash: making the A* heuristic overestimate
-(×3) fails the A*-matches-Dijkstra property. CI builds with GCC and Clang (warnings as
+(×3) fails the A*-matches-Dijkstra property, and a weight secretly 4× too strong fails the
+weighted-A* bound. CI builds with GCC and Clang (warnings as
 errors) and runs the tests again under AddressSanitizer and UBSan.
 
 ## Build and run
@@ -122,7 +135,8 @@ with sanitizers.
 
 - **Search:** click an algorithm to run it (or `1`–`5`; `Space` runs it again). The visited
   cells fill in at the replay speed, then the path traces back from the end. **Compare All**
-  (`A`) runs all five on the current grid and lists their cost and cells visited. Pause (`P`),
+  (`A`) runs all five on the current grid and lists their cost and cells visited. The **A\*
+  weight** slider (1–6) turns A* into weighted A*. Pause (`P`),
   skip (`E`) or clear the replay; "Shade by visit order" colours visited cells from dark blue
   (first) to light blue (last), so you can watch the search spread.
 - **Grid:** Empty, Random, Maze or Terrain, with sliders for size, wall density and seed.

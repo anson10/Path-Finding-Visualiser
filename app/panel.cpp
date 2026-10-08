@@ -1,5 +1,6 @@
 // The side panel: a Search tab (run, compare, replay) and a Grid tab (generate, draw).
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <string>
 
@@ -48,7 +49,9 @@ void results(ui::Ui& u, State& s) {
             if (c.result.found && (best < 0 || c.result.cost < best)) best = c.result.cost;
         for (const auto& c : s.comparison) {
             const bool sel = c.algorithm == s.algorithm;
-            u.text(std::string(pf::name(c.algorithm)), 17, sel ? ui::colors::Accent : Text);
+            std::string label(pf::name(c.algorithm));
+            if (c.algorithm == pf::Algorithm::AStar && s.astar_weight > 1.05f) label += " w" + fixed(s.astar_weight, 1);
+            u.text(label, 17, sel ? ui::colors::Accent : Text);
             u.text(c.result.found ? thousands(c.result.cost) : "-", 17,
                    !c.result.found ? Dim : c.result.cost == best ? Good : Warning, 120);
             u.text(thousands(static_cast<long long>(c.result.nodes_expanded())), 17, Text, 190);
@@ -63,6 +66,8 @@ void results(ui::Ui& u, State& s) {
     if (s.result.found)
         u.line("Cost:      " + thousands(s.result.cost) + "  (" + thousands(static_cast<long long>(s.result.path.size())) + " cells)");
     u.line("Visited:  " + thousands(static_cast<long long>(s.result.nodes_expanded())) + " cells");
+    if (s.algorithm == pf::Algorithm::AStar && s.astar_weight > 1.05f)
+        u.line("Bound:    at most " + fixed(s.astar_weight, 1) + "x the cheapest", Dim, 16);
     u.line("Time:      " + fixed(s.search_ms, 3) + " ms");
 }
 
@@ -71,15 +76,18 @@ void search_tab(ui::Ui& u, State& s) {
     for (std::size_t i = 0; i < pf::kAlgorithms.size(); ++i) {
         const pf::Algorithm a = pf::kAlgorithms[i];
         const std::string label = std::to_string(i + 1) + "   " + std::string(pf::name(a));
-        if (u.button(label, a == s.algorithm && s.phase != Phase::Idle, 0, 34)) run(s, a);
+        if (u.button(label, a == s.algorithm && s.phase != Phase::Idle, 0, 31)) run(s, a);
         u.tooltip(hint(a));
     }
-    if (u.button("Compare All", false, 0, 34)) compare_all(s);
+    const float before = s.astar_weight;
+    u.slider("A* weight", s.astar_weight, 1.0f, 6.0f, s.astar_weight < 1.05f ? std::string("1  (optimal)") : fixed(s.astar_weight, 1));
+    s.astar_weight = std::round(s.astar_weight * 10.0f) / 10.0f;
+    u.tooltip("Above 1: weighted A*. Faster; path at most w times the cheapest");
+    if (s.astar_weight != before && s.algorithm == pf::Algorithm::AStar && s.phase != Phase::Idle) run(s, s.algorithm);
+    if (u.button("Compare All", false, 0, 31)) compare_all(s);
     u.tooltip("Run all five on this grid  (A)");
-    u.gap(4);
 
     results(u, s);
-    u.gap(6);
 
     u.heading("REPLAY");
     u.slider("Speed", s.speed, 25.0f, 50000.0f, thousands(static_cast<long long>(s.speed)) + " cells/s", true);

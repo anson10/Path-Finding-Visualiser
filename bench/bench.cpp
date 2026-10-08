@@ -48,20 +48,29 @@ void run(const Scenario& scenario, int size, int seeds) {
                 grids.size());
     std::printf("| Algorithm | Median time (ms) | Median cells expanded | Path cost vs optimum |\n");
     std::printf("|---|---|---|---|\n");
-    for (pf::Algorithm algorithm : pf::kAlgorithms) {
+    struct Variant {
+        pf::Algorithm algorithm;
+        double weight;
+    };
+    std::vector<Variant> variants;
+    for (pf::Algorithm a : pf::kAlgorithms) variants.push_back({a, 1.0});
+    for (double w : {1.5, 2.0, 3.0, 5.0}) variants.push_back({pf::Algorithm::AStar, w});
+    for (const auto [algorithm, weight] : variants) {
         std::vector<double> ms;
         std::vector<std::size_t> expanded;
         std::vector<double> ratio;
         for (std::size_t g = 0; g < grids.size(); ++g) {
             const auto t0 = std::chrono::steady_clock::now();
-            const auto result = pf::search(grids[g], start, goal, algorithm);
+            const auto result = pf::search(grids[g], start, goal, algorithm, weight);
             const auto t1 = std::chrono::steady_clock::now();
             ms.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
             expanded.push_back(result.nodes_expanded());
             ratio.push_back(static_cast<double>(result.cost) / static_cast<double>(optimum[g]));
         }
-        std::printf("| %s | %.2f | %zu | %+.1f%% |\n", std::string(pf::name(algorithm)).c_str(),
-                    median(ms), median(expanded), 100.0 * (median(ratio) - 1.0));
+        std::string label(pf::name(algorithm));
+        if (weight != 1.0) label += " (w=" + std::to_string(weight).substr(0, 3) + ")";
+        std::printf("| %s | %.2f | %zu | %+.1f%% |\n", label.c_str(), median(ms), median(expanded),
+                    100.0 * (median(ratio) - 1.0));
     }
 }
 
