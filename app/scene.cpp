@@ -1,5 +1,6 @@
-// The grid: cells as one vertex array, the expansion coloured by when each cell was reached
-// (a wavefront), fresh cells fading in, the path as a thick rounded line, round markers.
+// The grid, in the original palette: white cells on dark grid lines, black walls, a green
+// start, a red end, light-blue visited cells and a yellow path. Mud cells shade towards brown
+// with their cost.
 #include <algorithm>
 #include <cmath>
 
@@ -8,52 +9,30 @@
 namespace app {
 namespace {
 
-namespace palette {
-const sf::Color kBackground{11, 15, 25};
-const sf::Color kBoard{17, 24, 39};
-const sf::Color kOpen{36, 46, 66};
-const sf::Color kMud{146, 84, 30};        // the most expensive terrain
-const sf::Color kWaveEarly{79, 70, 229};  // first cells expanded (indigo)
-const sf::Color kWaveLate{34, 211, 238};  // last cells expanded (cyan)
-const sf::Color kFresh{224, 242, 254};    // a cell the moment it is expanded
-const sf::Color kPath{251, 191, 36};
-const sf::Color kStart{16, 185, 129};
-const sf::Color kGoal{244, 63, 94};
-}  // namespace palette
+namespace colors {
+const sf::Color Background(40, 40, 40);
+const sf::Color GridLine(50, 50, 50);
+const sf::Color Empty(255, 255, 255);
+const sf::Color Wall(30, 30, 30);
+const sf::Color Start(0, 200, 0);
+const sf::Color End(200, 0, 0);
+const sf::Color Visited(100, 200, 255);
+const sf::Color JustVisited(190, 232, 255);  // a cell the moment it is visited
+const sf::Color Path(255, 255, 100);
+const sf::Color Mud(150, 105, 60);           // the most expensive terrain
+const sf::Color Hover(0, 140, 210);
+}  // namespace colors
 
 sf::Color mix(sf::Color a, sf::Color b, float t) {
     t = std::clamp(t, 0.0f, 1.0f);
     auto m = [t](sf::Uint8 x, sf::Uint8 y) {
         return static_cast<sf::Uint8>(std::lround(static_cast<float>(x) + t * (static_cast<float>(y) - static_cast<float>(x))));
     };
-    return {m(a.r, b.r), m(a.g, b.g), m(a.b, b.b), m(a.a, b.a)};
+    return {m(a.r, b.r), m(a.g, b.g), m(a.b, b.b)};
 }
 
-sf::Color terrain(std::uint8_t cost) {
-    return cost <= 1 ? palette::kOpen : mix(palette::kOpen, palette::kMud, static_cast<float>(cost - 1) / 8.0f);
-}
-
-void add_quad(sf::VertexArray& v, sf::Vector2f pos, float size, sf::Color c) {
-    v.append({pos, c});
-    v.append({{pos.x + size, pos.y}, c});
-    v.append({{pos.x + size, pos.y + size}, c});
-    v.append({{pos.x, pos.y + size}, c});
-}
-
-void marker(sf::RenderTarget& target, sf::Vector2f centre, float radius, sf::Color fill) {
-    sf::CircleShape ring(radius + radius * 0.28f, 40);
-    ring.setOrigin(ring.getRadius(), ring.getRadius());
-    ring.setPosition(centre);
-    ring.setFillColor({fill.r, fill.g, fill.b, 70});
-    target.draw(ring);
-    sf::CircleShape dot(radius, 40);
-    dot.setOrigin(radius, radius);
-    dot.setPosition(centre);
-    dot.setFillColor(fill);
-    dot.setOutlineThickness(std::max(1.0f, radius * 0.18f));
-    dot.setOutlineColor({255, 255, 255, 230});
-    target.draw(dot);
-}
+// 0 for cost 1, 1 for cost 9
+float weight(std::uint8_t cost) { return static_cast<float>(cost - 1) / 8.0f; }
 
 }  // namespace
 
@@ -65,93 +44,69 @@ std::optional<pf::Point> Layout::cell_at(sf::Vector2f pixel, const pf::Grid& gri
 }
 
 Layout layout_for(sf::Vector2f window, const pf::Grid& grid) {
-    const float margin = 28.0f;  // left and right
-    const float band = 52.0f;    // top (hover info) and bottom (legend)
-    const float w = std::max(window.x - kPanelWidth - 2 * margin, 50.0f);
-    const float h = std::max(window.y - 2 * band, 50.0f);
-    const float cell = std::floor(std::min(w / static_cast<float>(grid.width()), h / static_cast<float>(grid.height())));
+    const float margin = 16.0f;
+    const float w = std::max(window.x - kPanelWidth - 2 * margin, 40.0f);
+    const float h = std::max(window.y - 2 * margin, 40.0f);
+    const float cell = std::max(2.0f, std::floor(std::min(w / static_cast<float>(grid.width()),
+                                                          h / static_cast<float>(grid.height()))));
     const float gw = cell * static_cast<float>(grid.width());
     const float gh = cell * static_cast<float>(grid.height());
-    return {{std::floor(margin + (w - gw) / 2), std::floor(band + (h - gh) / 2)}, std::max(cell, 2.0f)};
+    return {{std::floor(margin + (w - gw) / 2), std::floor(margin + (h - gh) / 2)}, cell};
 }
 
 void draw_scene(sf::RenderTarget& target, const State& s, const Layout& L) {
-    target.clear(palette::kBackground);
+    target.clear(colors::Background);
     const pf::Grid& g = s.grid;
-    const float gap = L.cell >= 8 ? 1.0f : 0.0f;
 
-    sf::RectangleShape board({L.cell * static_cast<float>(g.width()) + 12, L.cell * static_cast<float>(g.height()) + 12});
-    board.setPosition(L.origin.x - 6, L.origin.y - 6);
-    board.setFillColor(palette::kBoard);
+    // Grid lines are the gaps between cells, on a GridLine-coloured board.
+    sf::RectangleShape board({L.cell * static_cast<float>(g.width()) + 1, L.cell * static_cast<float>(g.height()) + 1});
+    board.setPosition(L.origin);
+    board.setFillColor(colors::GridLine);
     target.draw(board);
 
-    // Base colour per cell; walls stay the board colour, so open space reads as carved.
-    std::vector<sf::Color> colour(static_cast<std::size_t>(g.size()));
+    std::vector<sf::Color> fill(static_cast<std::size_t>(g.size()));
     for (int i = 0; i < g.size(); ++i) {
         const std::uint8_t c = g.cost(g.point(i));
-        colour[i] = c == pf::Grid::kWall ? palette::kBoard : terrain(c);
+        fill[i] = c == pf::Grid::kWall ? colors::Wall : mix(colors::Empty, colors::Mud, weight(c));
     }
-
-    // The replayed expansion: hue by order, brightness kept lower on costly terrain so the
-    // cost still shows through, and a short fade from white for the newest cells.
     const auto& expanded = s.result.expanded;
-    const auto shown = static_cast<std::size_t>(s.revealed);
-    const float n = static_cast<float>(std::max<std::size_t>(expanded.size(), 1));
-    for (std::size_t k = 0; k < shown; ++k) {
+    for (std::size_t k = 0; k < static_cast<std::size_t>(s.revealed); ++k) {
         const int i = g.index(expanded[k]);
-        sf::Color wave = mix(palette::kWaveEarly, palette::kWaveLate, static_cast<float>(k) / n);
-        // costly cells stay darker, so terrain still reads under the wavefront
-        const std::uint8_t c = g.cost(expanded[k]);
-        if (c > 1) wave = mix(wave, palette::kBoard, 0.55f * static_cast<float>(c - 1) / 8.0f);
+        // muddy cells keep some brown under the blue, so the cost still shows
+        const sf::Color visited = mix(colors::Visited, colors::Mud, 0.6f * weight(g.cost(expanded[k])));
         const float age = k < s.revealed_at.size() ? static_cast<float>(s.clock) - s.revealed_at[k] : 1.0f;
-        colour[i] = mix(palette::kFresh, wave, age / 0.35f);
+        fill[i] = mix(colors::JustVisited, visited, age / 0.25f);
     }
+    const auto drawn = std::min(s.result.path.size(), static_cast<std::size_t>(std::ceil(s.path_shown)));
+    // the path is traced back from the end, the way it is reconstructed
+    for (std::size_t k = 0; k < drawn; ++k) fill[g.index(s.result.path[s.result.path.size() - 1 - k])] = colors::Path;
+    fill[g.index(s.start)] = colors::Start;
+    fill[g.index(s.goal)] = colors::End;
 
-    sf::VertexArray cells(sf::Quads);
-    cells.resize(0);
+    const float gap = L.cell >= 6 ? 1.0f : 0.0f;
+    sf::VertexArray cells(sf::Quads, static_cast<std::size_t>(g.size()) * 4);
     for (int i = 0; i < g.size(); ++i) {
-        if (g.cost(g.point(i)) == pf::Grid::kWall) continue;
         const pf::Point p = g.point(i);
-        add_quad(cells, {L.origin.x + static_cast<float>(p.x) * L.cell + gap / 2, L.origin.y + static_cast<float>(p.y) * L.cell + gap / 2},
-                 L.cell - gap, colour[i]);
+        const float x = L.origin.x + static_cast<float>(p.x) * L.cell + gap;
+        const float y = L.origin.y + static_cast<float>(p.y) * L.cell + gap;
+        const float size = L.cell - gap;
+        sf::Vertex* q = &cells[static_cast<std::size_t>(i) * 4];
+        q[0] = {{x, y}, fill[i]};
+        q[1] = {{x + size, y}, fill[i]};
+        q[2] = {{x + size, y + size}, fill[i]};
+        q[3] = {{x, y + size}, fill[i]};
     }
     target.draw(cells);
 
-    // Path: a thick line through cell centres with rounded joints, drawn progressively.
-    const auto& path = s.result.path;
-    const auto drawn = std::min(path.size(), static_cast<std::size_t>(std::ceil(s.path_shown)));
-    if (drawn > 0) {
-        const float width = std::max(2.0f, L.cell * 0.36f);
-        sf::CircleShape joint(width / 2, 16);
-        joint.setOrigin(width / 2, width / 2);
-        joint.setFillColor(palette::kPath);
-        for (std::size_t k = 0; k < drawn; ++k) {
-            const sf::Vector2f c = L.centre(path[k]);
-            joint.setPosition(c);
-            target.draw(joint);
-            if (k + 1 < drawn) {
-                const sf::Vector2f d = L.centre(path[k + 1]);
-                sf::RectangleShape seg({std::abs(d.x - c.x) + width, std::abs(d.y - c.y) + width});
-                seg.setPosition(std::min(c.x, d.x) - width / 2, std::min(c.y, d.y) - width / 2);
-                seg.setFillColor(palette::kPath);
-                target.draw(seg);
-            }
-        }
-    }
-
-    // Hover outline.
     if (s.hover) {
-        sf::RectangleShape h({L.cell - 1, L.cell - 1});
-        h.setPosition(L.origin.x + static_cast<float>(s.hover->x) * L.cell, L.origin.y + static_cast<float>(s.hover->y) * L.cell);
+        sf::RectangleShape h({L.cell - 2, L.cell - 2});
+        h.setPosition(L.origin.x + static_cast<float>(s.hover->x) * L.cell + 1.5f,
+                      L.origin.y + static_cast<float>(s.hover->y) * L.cell + 1.5f);
         h.setFillColor(sf::Color::Transparent);
         h.setOutlineThickness(1.5f);
-        h.setOutlineColor({255, 255, 255, 150});
+        h.setOutlineColor(colors::Hover);
         target.draw(h);
     }
-
-    const float r = std::max(3.0f, L.cell * 0.34f);
-    marker(target, L.centre(s.start), r, palette::kStart);
-    marker(target, L.centre(s.goal), r, palette::kGoal);
 }
 
 }  // namespace app
