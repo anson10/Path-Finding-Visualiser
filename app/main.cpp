@@ -121,8 +121,10 @@ int main(int argc, char** argv) {
         const auto p = cell_at(pixel);
         if (!p || s.phase == app::Phase::Expanding || s.phase == app::Phase::Tracing) return;
         if (drag == Drag::Start || drag == Drag::Goal) {
-            if (!s.grid.passable(*p) || *p == (drag == Drag::Start ? s.goal : s.start)) return;
-            (drag == Drag::Start ? s.start : s.goal) = *p;
+            const pf::Point cell = *p;
+            if (!s.grid.passable(cell)) return;
+            if (drag == Drag::Start && cell != s.goal) s.start = cell;
+            if (drag == Drag::Goal && cell != s.start) s.goal = cell;
         } else if (*p != s.start && *p != s.goal) {
             s.grid.set_cost(*p, drag == Drag::Paint ? pf::Grid::kWall
                                 : drag == Drag::Mud ? app::kMudCost
