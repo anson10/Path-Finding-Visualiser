@@ -197,3 +197,29 @@ TEST_CASE("path_cost rejects broken walks") {
     CHECK(pf::path_cost(grid, {{1, 0}, {1, 1}}) == -1);          // through a wall
     CHECK(pf::path_cost(grid, {{0, 0}, {1, 0}, {2, 0}}) == 2);
 }
+
+TEST_CASE("weighted A* stays within its weight of the optimum (weighted grids)") {
+    const auto seed = GENERATE(range<std::uint64_t>(0, 60));
+    const Grid grid = open_corners(pf::random_terrain(40, 40, 0.2, 9, seed));
+    const auto optimum = pf::search(grid, {0, 0}, far_corner(grid), Algorithm::Dijkstra);
+    if (!optimum.found) return;
+    for (double w : {1.2, 1.5, 2.0, 3.0, 5.0}) {
+        const auto r = pf::search(grid, {0, 0}, far_corner(grid), Algorithm::AStar, w);
+        INFO("seed " << seed << " weight " << w);
+        REQUIRE(r.found);
+        CHECK(pf::path_cost(grid, r.path) == r.cost);
+        CHECK(static_cast<double>(r.cost) <= w * static_cast<double>(optimum.cost));
+    }
+}
+
+TEST_CASE("weight 1 is plain A*, and a large weight expands far fewer cells") {
+    const auto seed = GENERATE(range<std::uint64_t>(0, 30));
+    const Grid grid = open_corners(pf::random_terrain(60, 60, 0.15, 9, seed));
+    const auto plain = pf::search(grid, {0, 0}, far_corner(grid), Algorithm::AStar);
+    const auto one = pf::search(grid, {0, 0}, far_corner(grid), Algorithm::AStar, 1.0);
+    const auto five = pf::search(grid, {0, 0}, far_corner(grid), Algorithm::AStar, 5.0);
+    INFO("seed " << seed);
+    CHECK(one.cost == plain.cost);
+    CHECK(one.expanded == plain.expanded);
+    if (plain.found) CHECK(five.nodes_expanded() < plain.nodes_expanded());
+}

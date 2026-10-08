@@ -32,8 +32,11 @@ struct SearchResult {
     [[nodiscard]] std::size_t nodes_expanded() const noexcept { return expanded.size(); }
 };
 
+// `astar_weight` w >= 1 turns A* into weighted A*: it orders cells by g + w·h, trading
+// optimality for speed. With the consistent heuristic used here the path costs at most w
+// times the optimum (no cell is ever re-expanded). Other algorithms ignore it.
 [[nodiscard]] SearchResult search(const Grid& grid, Point start, Point goal,
-                                  Algorithm algorithm);
+                                  Algorithm algorithm, double astar_weight = 1.0);
 
 // Cost of walking `path` on `grid`, or -1 if it is not a walk of passable 4-neighbours.
 [[nodiscard]] long long path_cost(const Grid& grid, const std::vector<Point>& path);

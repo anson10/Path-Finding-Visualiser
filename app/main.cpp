@@ -2,7 +2,7 @@
 //
 //   pathfinder-app
 //   pathfinder-app --screenshot out.png [--scene maze|walls|terrain] [--algorithm bfs]
-//                  [--seed 7] [--compare] [--grid-tab]
+//                  [--seed 7] [--weight 1.5] [--compare] [--grid-tab]
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -82,6 +82,7 @@ int screenshot(int argc, char** argv, const sf::Font& font) {
         return EXIT_FAILURE;
     }
     s.algorithm = *algorithm;
+    s.astar_weight = static_cast<float>(std::atof(option(argc, argv, "--weight", "1")));
     if (has_flag(argc, argv, "--compare")) app::compare_all(s);
     else app::run(s, *algorithm);
     app::skip_to_end(s);

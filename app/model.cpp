@@ -8,7 +8,7 @@ namespace {
 
 double timed_search(const State& s, pf::Algorithm algorithm, pf::SearchResult& out) {
     const auto t0 = std::chrono::steady_clock::now();
-    out = pf::search(s.grid, s.start, s.goal, algorithm);
+    out = pf::search(s.grid, s.start, s.goal, algorithm, s.astar_weight);
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
