@@ -34,3 +34,14 @@ jobs:
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DPATHFINDER_SANITIZE=ON -DPATHFINDER_BUILD_APP=OFF
       - run: cmake --build build
       - run: ctest --test-dir build --output-on-failure
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (MSVC, SFML built from source)
+        run: cmake -S . -B build -DPATHFINDER_FETCH_SFML=ON
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure

@@ -1,0 +1,65 @@
+# Push a tag like v2.0.0: builds the Windows and Linux packages and publishes the release,
+# with notes from docs/release-notes/<tag>.md.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S . -B build -DPATHFINDER_FETCH_SFML=ON -DPATHFINDER_BUILD_TESTS=OFF
+      - run: cmake --build build --config Release
+      - name: Package
+        shell: pwsh
+        run: |
+          cmake --install build --config Release --component app --prefix PathfindingVisualizer
+          Compress-Archive -Path PathfindingVisualizer -DestinationPath "PathfindingVisualizer_${{ github.ref_name }}_windows.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: PathfindingVisualizer_*_windows.zip
+
+  linux:
+    # 22.04 for an older glibc, so the binary runs on more distributions
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies for SFML
+        run: >
+          sudo apt-get update && sudo apt-get install -y ninja-build libx11-dev libxrandr-dev
+          libxcursor-dev libudev-dev libgl-dev libfreetype-dev
+      - run: cmake -S . -B build -G Ninja -DPATHFINDER_FETCH_SFML=ON -DPATHFINDER_BUILD_TESTS=OFF
+      - run: cmake --build build
+      - name: Package
+        run: |
+          cmake --install build --component app --prefix PathfindingVisualizer
+          tar czf "PathfindingVisualizer_${{ github.ref_name }}_linux-x86_64.tar.gz" PathfindingVisualizer
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: PathfindingVisualizer_*_linux-x86_64.tar.gz
+
+  publish:
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="docs/release-notes/${{ github.ref_name }}.md"
+          gh release create "${{ github.ref_name }}" dist/* \
+            --title "Pathfinding Visualizer ${{ github.ref_name }}" \
+            $( [ -f "$notes" ] && echo --notes-file "$notes" || echo --generate-notes )
