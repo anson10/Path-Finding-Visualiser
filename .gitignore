@@ -1,0 +1,13 @@
+# build trees (cmake -B build, build-asan, ...)
+build*/
+# editors and IDEs
+.vs/
+.vscode/
+.idea/
+*.user
+# binaries never go in git: build them with CMake
+*.exe
+*.dll
+*.lib
+*.a
+*.o
